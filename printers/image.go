@@ -3,9 +3,35 @@ package printers
 import (
 	"image"
 	"image/color"
+
+	"golang.org/x/image/draw"
 )
 
-func rasterizeImage(img image.Image) [][]byte {
+func resizeAndDither(img image.Image, targetWidth int) image.Image {
+	var resized draw.Image
+	if img.Bounds().Dx() <= targetWidth {
+		targetHeight := img.Bounds().Dy()
+		resized = image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
+		// fill canvas with white
+		white := image.NewUniform(color.White)
+		draw.Draw(resized, resized.Bounds(), white, image.Point{}, draw.Src)
+		// Copy the original image onto the resized canvas in left upper corner
+		draw.Copy(resized, image.Point{0, 0}, img, img.Bounds(), draw.Src, nil)
+	} else {
+		// Resize the image to the target width while maintaining aspect ratio
+		targetHeight := (img.Bounds().Dy() * targetWidth) / img.Bounds().Dx()
+		resized = image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
+		draw.BiLinear.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Over, nil)
+	}
+
+	// Dither the resized image to 1-bit grayscale
+	dithered := image.NewPaletted(resized.Bounds(), []color.Color{color.Black, color.White})
+	draw.FloydSteinberg.Draw(dithered, dithered.Bounds(), resized, image.Point{})
+
+	return dithered
+}
+
+func rasterizeImage(src image.Image) [][]byte {
 	const (
 		packetPrefixSize  = 3 // 55 m n
 		packetDataSize    = 96
@@ -15,6 +41,8 @@ func rasterizeImage(img image.Image) [][]byte {
 		linesPerPacket    = 2
 		packetPayloadSize = packetPrefixSize + packetDataSize + packetTerminator
 	)
+
+	img := resizeAndDither(src, lineWidthPixels)
 
 	bounds := img.Bounds()
 	width := bounds.Dx()

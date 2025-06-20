@@ -3,7 +3,7 @@ module github.com/rusq/thermoprint
 go 1.24.2
 
 require (
-	github.com/davecgh/go-spew v1.1.1
+	golang.org/x/image v0.28.0
 	tinygo.org/x/bluetooth v0.12.0
 )
 
