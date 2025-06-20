@@ -1,0 +1,28 @@
+digraph PrinterFSM {
+    rankdir=LR;
+    node [shape=ellipse style=filled fillcolor=lightgray fontname=Arial];
+
+    Idle -> Initializing [label="Start"];
+    Initializing -> Ready [label="StatusReceived (5a02)"];
+    Ready -> Printing [label="BeginPrint"];
+
+    Printing -> Paused [label="Hold (5a08)"];
+    Printing -> Printing [label="Retransmit(k) (5a07)"];
+    Printing -> Completed [label="Finished (5a06)\nsend 5a04 01 00"];
+
+    Paused -> Printing [label="Retransmit(k) (5a07)"];
+
+    Idle -> Failed [label="Cancel/Error"];
+    Initializing -> Failed [label="Cancel/Error"];
+    Ready -> Failed [label="Cancel/Error"];
+    Printing -> Failed [label="Cancel/Error"];
+    Paused -> Failed [label="Cancel/Error"];
+
+    Completed -> Idle [label="(new job)", style=dashed];
+    Failed -> Idle [label="(manual reset)", style=dashed];
+
+    // Final states
+    Completed [fillcolor=lightgreen];
+    Failed [fillcolor=lightcoral];
+}
+
