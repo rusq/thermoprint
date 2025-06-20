@@ -2,11 +2,14 @@ package printers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"time"
 )
 
 type printerState int
 
+//go:generate stringer -type=printerState -trimprefix=state
 const (
 	stateIdle printerState = iota
 	stateInitializing
@@ -20,12 +23,13 @@ const (
 
 type printerEvent int
 
+//go:generate stringer -type=printerEvent -trimprefix=event
 const (
 	eventStart printerEvent = iota
 	eventNotificationHold
 	eventNotificationRetransmit
 	eventNotificationFinished
-	eventNotificationStatus
+	eventInitComplete
 	eventCancel
 	eventError
 )
@@ -63,13 +67,32 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 		}
 
 	case stateInitializing:
-		if evt == eventNotificationStatus {
+		if evt == eventInitComplete {
 			log.Info("Printer ready after status")
 			p.state = stateReady
 			go func() {
+				slog.Debug("switching to printing state")
 				p.stateMu.Lock()
 				p.state = statePrinting
 				p.stateMu.Unlock()
+				buflen := len(p.buffer)
+				if buflen == 0 {
+					slog.Error("Buffer is empty, cannot start printing")
+					p.eventCh <- fsmEvent{kind: eventError}
+					return
+				}
+				m := byte((buflen >> 8) & 0xFF)
+				n := byte(buflen & 0xFF)
+
+				slog.Debug("Sending initial print command")
+				beginCmd := []byte{0x5a, 0x04, m, n, 0x00, 0x00}
+				resp, err := p.sendAndWait(beginCmd, beginCmd[:2], 3*time.Second)
+				if err != nil {
+					slog.Error("Failed to send initial print command", "error", err)
+					p.eventCh <- fsmEvent{kind: eventError}
+					return
+				}
+				slog.Debug("Initial print command ack", "response", fmt.Sprintf("% x", resp))
 				p.printBuffer(0)
 			}()
 		}
@@ -92,25 +115,6 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 			}
 			p.state = statePrinting
 			go p.printBuffer(packet)
-
-		case eventNotificationFinished:
-			log.Info("Printer reports print complete, sending finalization")
-			p.state = stateCompleted
-
-			go func() {
-				buflen := len(p.buffer)
-				m := byte((buflen >> 8) & 0xFF)
-				n := byte(buflen & 0xFF)
-				finalCmd := []byte{0x5a, 0x04, m, n, 0x01, 0x00}
-				if err := p.send(finalCmd); err != nil {
-					slog.Error("Failed to send final end command", "error", err)
-					p.eventCh <- fsmEvent{kind: eventError}
-					return
-				}
-				slog.Info("Final end-of-transmission command sent")
-				p.doneCh <- struct{}{}
-			}()
-
 		case eventError:
 			log.Error("Error occurred during print")
 			if p.printCancel != nil {
@@ -118,6 +122,33 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 			}
 			p.state = stateFailed
 			p.doneCh <- struct{}{}
+		case eventNotificationFinished:
+			log.Info("data sent, waiting for printer to complete")
+			p.state = stateWaitingRetry
+		default:
+			log.Warn("Unexpected event during printing", "event", evt)
+		}
+
+	case stateWaitingRetry:
+		switch evt {
+		case eventNotificationFinished:
+			log.Info("Printer reports print complete, sending finalization")
+			p.state = stateCompleted
+
+			buflen := len(p.buffer)
+			m := byte((buflen >> 8) & 0xFF)
+			n := byte(buflen & 0xFF)
+			finalCmd := []byte{0x5a, 0x04, m, n, 0x01, 0x00}
+			resp, err := p.sendAndWait(finalCmd, finalCmd[:2], 3*time.Second)
+			if err != nil {
+				slog.Error("Failed to send final end command", "error", err)
+				p.eventCh <- fsmEvent{kind: eventError}
+				return
+			}
+			slog.Info("Final end-of-transmission command ack", "response", fmt.Sprintf("% x", resp))
+			p.doneCh <- struct{}{}
+		default:
+			log.Warn("Unexpected event in waiting retry state", "event", evt)
 		}
 
 	case statePaused:
@@ -129,7 +160,11 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 		}
 
 	case stateCompleted:
-		log.Info("Ignoring event, print job already completed")
+		if evt == eventCancel {
+			// nothing
+		} else {
+			log.Info("Ignoring event, print job already completed")
+		}
 
 	case stateFailed:
 		log.Warn("Already in failed state, ignoring event")
@@ -139,7 +174,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 	}
 
 	// Global cancellation or error
-	if evt == eventCancel || evt == eventError {
+	if p.state != stateCompleted && (evt == eventCancel || evt == eventError) {
 		if p.printCancel != nil {
 			p.printCancel()
 		}

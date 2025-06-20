@@ -4,6 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log"
 	"log/slog"
 	"os"
@@ -19,7 +22,8 @@ var adapter = bluetooth.DefaultAdapter
 
 type config struct {
 	printers.SearchParameters
-	verbose bool
+	brightness uint // 0-6
+	verbose    bool
 }
 
 var cliflags config
@@ -29,6 +33,7 @@ func init() {
 	flag.StringVar(&cliflags.Name, "p", "LX-D02", "Printer name to use")
 	flag.StringVar(&cliflags.MACAddress, "mac", "", "MAC address of the printer")
 	flag.BoolVar(&cliflags.verbose, "v", os.Getenv("DEBUG") == "1", "Enable verbose logging")
+	flag.UintVar(&cliflags.brightness, "b", 2, "Brightness `level` (0-6)")
 }
 
 func main() {
@@ -53,13 +58,13 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, cfg config, image string) error {
-	prn, err := printers.NewLXD02(ctx, adapter, cfg.SearchParameters)
+func run(ctx context.Context, cfg config, imgfile string) error {
+	prn, err := printers.NewLXD02(ctx, adapter, cfg.SearchParameters, printers.WithBrightness(uint8(cfg.brightness)))
 	if err != nil {
 		return fmt.Errorf("failed to create printer: %w", err)
 	}
 	defer prn.Disconnect()
-	f, err := os.Open(image)
+	f, err := os.Open(imgfile)
 	if err != nil {
 		return fmt.Errorf("failed to open image file: %w", err)
 	}

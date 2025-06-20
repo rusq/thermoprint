@@ -32,7 +32,7 @@ func rasterizeImage(img image.Image) [][]byte {
 	numPackets := height / linesPerPacket
 	packets := make([][]byte, 0, numPackets)
 
-	for packetIndex := 0; packetIndex < numPackets; packetIndex++ {
+	for packetIndex := range numPackets {
 		y0 := packetIndex * 2
 		y1 := y0 + 1
 
@@ -44,7 +44,7 @@ func rasterizeImage(img image.Image) [][]byte {
 
 		// First line (y0)
 		lineBytes := make([]byte, lineWidthBytes)
-		for x := 0; x < lineWidthPixels; x++ {
+		for x := range lineWidthPixels {
 			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y0)
 			if bit {
 				lineBytes[x/8] |= (1 << (7 - (x % 8)))

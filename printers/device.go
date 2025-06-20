@@ -80,7 +80,7 @@ func locateCharacteristics(device bluetooth.Device, tx string, rx string) (txrx,
 	if !txOK || !rxOK {
 		return txrx, fmt.Errorf("required characteristics not found: TX (%s) or RX (%s)", txChar, rxChar)
 	}
-	slog.Info("Required characteristics found", "txChar", txChar, "rxChar", rxChar)
+	slog.Debug("Required characteristics found", "txChar", txChar, "rxChar", rxChar)
 
 	// discover characteristics
 	return txrx, nil

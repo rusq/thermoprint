@@ -20,21 +20,36 @@ const (
 )
 
 type LXD02 struct {
-	dev    bluetooth.Device
-	tx     bluetooth.DeviceCharacteristic
-	rx     bluetooth.DeviceCharacteristic
-	buffer [][]byte
+	dev        bluetooth.Device
+	tx         bluetooth.DeviceCharacteristic
+	rx         bluetooth.DeviceCharacteristic
+	buffer     [][]byte
+	brightness uint8 // 0-6
 
 	stateMu     sync.Mutex
 	state       printerState
 	eventCh     chan fsmEvent
 	doneCh      chan struct{}
-	cancelCtx   context.CancelFunc
 	printCtx    context.Context
 	printCancel context.CancelFunc
+
+	responseMu    sync.Mutex
+	waitingPrefix []byte
+	responseCh    chan []byte
 }
 
-func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters) (*LXD02, error) {
+type Option func(*LXD02)
+
+func WithBrightness(brightness uint8) Option {
+	if brightness > 6 {
+		brightness = 6 // Cap brightness to 6
+	}
+	return func(p *LXD02) {
+		p.brightness = brightness
+	}
+}
+
+func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, opt ...Option) (*LXD02, error) {
 	foundDevice, err := LocateDevice(ctx, adapter, sp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to locate device: %w", err)
@@ -54,13 +69,16 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 		tx:  txrx.tx,
 		rx:  txrx.rx,
 	}
+	for _, o := range opt {
+		o(prn)
+	}
 
-	cmdCh := make(chan lxd02notification, 10)
-	if err := prn.rx.EnableNotifications(prn.notificationCallback(cmdCh)); err != nil {
+	notifyCh := make(chan lxd02notification, 10)
+	if err := prn.rx.EnableNotifications(prn.notificationCallback(notifyCh)); err != nil {
 		return nil, fmt.Errorf("failed to enable notifications on TX characteristic: %w", err)
 	}
 	slog.Debug("enabled notifications, starting worker")
-	go prn.worker(ctx, cmdCh)
+	go prn.worker(ctx, notifyCh)
 
 	slog.Info("Connected to printer", "address", device.Address, "mac", device.Address)
 	return prn, nil
@@ -68,12 +86,29 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 
 var lxd02endian = binary.BigEndian
 
-func (p *LXD02) notificationCallback(cmdCh chan<- lxd02notification) func(value []byte) {
+func (p *LXD02) notificationCallback(notifyCh chan<- lxd02notification) func(value []byte) {
 	return func(value []byte) {
 		if len(value) < 2 {
 			slog.Warn("Received notification with insufficient length", "length", len(value))
 			return
 		}
+
+		p.responseMu.Lock()
+		if p.waitingPrefix != nil && bytes.HasPrefix(value, p.waitingPrefix) && p.responseCh != nil {
+			// Copy to avoid race
+			resp := make([]byte, len(value))
+			copy(resp, value)
+			select {
+			case p.responseCh <- resp:
+			default:
+				slog.Warn("responseCh full or ignored")
+			}
+			p.waitingPrefix = nil
+			p.responseCh = nil
+			p.responseMu.Unlock()
+			return
+		}
+		p.responseMu.Unlock()
 
 		var prefix uint16
 		if _, err := binary.Decode(value[:2], lxd02endian, &prefix); err != nil {
@@ -83,7 +118,15 @@ func (p *LXD02) notificationCallback(cmdCh chan<- lxd02notification) func(value 
 
 		switch notification(prefix) {
 		case ntStatus:
-			cmdCh <- lxd02notification{prefix: ntStatus, data: value}
+			notifyCh <- lxd02notification{prefix: ntStatus, data: value}
+		case ntFinished:
+			notifyCh <- lxd02notification{prefix: ntFinished, data: value}
+		case ntRetransmit:
+			notifyCh <- lxd02notification{prefix: ntRetransmit, data: value}
+		case ntCooldown:
+			time.Sleep(100 * time.Millisecond) // Cooldown period
+		case ntHold:
+			notifyCh <- lxd02notification{prefix: ntHold, data: value}
 		default:
 			slog.Warn("Received unknown notification", "value", fmt.Sprintf("% x", value))
 		}
@@ -186,13 +229,9 @@ func (p *LXD02) loadBuffer(data [][]byte) {
 	copy(p.buffer, data)
 }
 
-func (p *LXD02) PrintImage(img image.Image) error {
+func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 	p.doneCh = make(chan struct{})
 	p.eventCh = make(chan fsmEvent, 10)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	p.cancelCtx = cancel
-	defer cancel()
 
 	p.loadBuffer(rasterizeImage(img))
 	go p.runFSM(ctx)
@@ -245,9 +284,7 @@ func (p *LXD02) printBuffer(start int) {
 		}
 
 		slog.Info("All packets sent, waiting for printer to complete (5a06)")
-		p.stateMu.Lock()
-		p.state = stateWaitingRetry // intermediate state while waiting
-		p.stateMu.Unlock()
+		p.eventCh <- fsmEvent{kind: eventNotificationFinished}
 	}()
 }
 
@@ -256,16 +293,18 @@ func (p *LXD02) sendInitSequence() {
 		{0x5a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 		{0x5a, 0x0a, 0xB5, 0x7C, 0x4C, 0xB8, 0xAE, 0x70, 0x51, 0xE6, 0xD3, 0x06},
 		{0x5a, 0x0b, 0x66, 0x3B, 0x62, 0x8C, 0x1A, 0x69, 0xBF, 0x54, 0x74, 0x4C},
-		{0x5a, 0x0c, 0x02}, // TODO: function
+		{0x5a, 0x0c, p.brightness},
 	}
 	for _, cmd := range initSeq {
-		if err := p.send(cmd); err != nil {
+		expectPrefix := cmd[:2]
+		resp, err := p.sendAndWait(cmd, expectPrefix, 3*time.Second)
+		if err != nil {
 			p.eventCh <- fsmEvent{kind: eventError}
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		slog.Debug("init ack", "prefix", fmt.Sprintf("% x", expectPrefix), "response", fmt.Sprintf("% x", resp))
 	}
-	p.eventCh <- fsmEvent{kind: eventNotificationStatus}
+	p.eventCh <- fsmEvent{kind: eventInitComplete}
 }
 
 func extractRetryPacketIndex(data []byte) int {
@@ -287,4 +326,34 @@ func (p *LXD02) send(data []byte) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return errors.New("BLE write failed after retries")
+}
+
+func (p *LXD02) sendAndWait(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error) {
+	p.responseMu.Lock()
+	if p.responseCh != nil {
+		p.responseMu.Unlock()
+		return nil, errors.New("sendAndWait already in progress")
+	}
+	p.responseCh = make(chan []byte, 1)
+	p.waitingPrefix = expectPrefix
+	p.responseMu.Unlock()
+
+	if _, err := p.tx.WriteWithoutResponse(data); err != nil {
+		p.responseMu.Lock()
+		p.responseCh = nil
+		p.waitingPrefix = nil
+		p.responseMu.Unlock()
+		return nil, fmt.Errorf("send failed: %w", err)
+	}
+
+	select {
+	case resp := <-p.responseCh:
+		return resp, nil
+	case <-time.After(timeout):
+		p.responseMu.Lock()
+		p.responseCh = nil
+		p.waitingPrefix = nil
+		p.responseMu.Unlock()
+		return nil, fmt.Errorf("timeout waiting for response to % X", expectPrefix)
+	}
 }
