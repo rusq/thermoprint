@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"tinygo.org/x/bluetooth"
 
@@ -22,7 +23,8 @@ var adapter = bluetooth.DefaultAdapter
 
 type config struct {
 	printers.SearchParameters
-	brightness uint // 0-6
+	energy     uint // 0-6
+	printDelay time.Duration
 	verbose    bool
 }
 
@@ -33,7 +35,8 @@ func init() {
 	flag.StringVar(&cliflags.Name, "p", "LX-D02", "Printer name to use")
 	flag.StringVar(&cliflags.MACAddress, "mac", "", "MAC address of the printer")
 	flag.BoolVar(&cliflags.verbose, "v", os.Getenv("DEBUG") == "1", "Enable verbose logging")
-	flag.UintVar(&cliflags.brightness, "b", 2, "Brightness `level` (0-6)")
+	flag.UintVar(&cliflags.energy, "e", 2, "Thermal energy `level` (0-6), higher is darker printout")
+	flag.DurationVar(&cliflags.printDelay, "d", printers.DefaultPrintDelay, "Delay between print commands")
 }
 
 func init() {
@@ -68,7 +71,7 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config, imgfile string) error {
-	prn, err := printers.NewLXD02(ctx, adapter, cfg.SearchParameters, printers.WithBrightness(uint8(cfg.brightness)))
+	prn, err := printers.NewLXD02(ctx, adapter, cfg.SearchParameters, printers.WithEnergy(uint8(cfg.energy)), printers.WithPrintInterval(cfg.printDelay))
 	if err != nil {
 		return fmt.Errorf("failed to create printer: %w", err)
 	}

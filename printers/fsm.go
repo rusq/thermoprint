@@ -147,6 +147,13 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 			}
 			slog.Info("Final end-of-transmission command ack", "response", fmt.Sprintf("% x", resp))
 			p.doneCh <- struct{}{}
+		case eventNotificationHold:
+			// holding
+		case eventNotificationRetransmit:
+			packet := extractRetryPacketIndex(data)
+			log.Warn("Retransmit request in waiting retry state", "packet", packet)
+			p.state = statePrinting
+			go p.printBuffer(packet)
 		default:
 			log.Warn("Unexpected event in waiting retry state", "event", evt)
 		}

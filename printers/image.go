@@ -8,6 +8,11 @@ import (
 	"golang.org/x/image/draw"
 )
 
+const (
+	DefaultLineWidth = 384 // 48 bytes, 384 pixels wide
+	DefaultThreshold = 128 // Default threshold for dark pixels
+)
+
 func resize(img image.Image, targetWidth int) image.Image {
 	var resized draw.Image
 	if img.Bounds().Dx() <= targetWidth {
@@ -43,8 +48,15 @@ func dFloydSteinberg(img image.Image) image.Image {
 func dStucki(img image.Image) image.Image {
 	dithered := image.NewRGBA(img.Bounds())
 	d := dither.NewDitherer([]color.Color{color.Black, color.White})
-	// d.Mapper = dither.Bayer(8, 8, 1.0)
-	d.Matrix = dither.Stucki
+	d.Matrix = dither.Atkinson
+	d.Draw(dithered, dithered.Bounds(), img, image.Point{})
+	return dithered
+}
+
+func dBayer(img image.Image) image.Image {
+	dithered := image.NewPaletted(img.Bounds(), []color.Color{color.Black, color.White})
+	d := dither.NewDitherer([]color.Color{color.Black, color.White})
+	d.Mapper = dither.Bayer(8, 8, 1.0) // 8x8 Bayer matrix
 	d.Draw(dithered, dithered.Bounds(), img, image.Point{})
 	return dithered
 }
@@ -59,6 +71,7 @@ type Raster struct {
 	PrefixFunc     func(packetIndex int) []byte      // returns 55 m n
 	Terminator     byte                              // 00
 	DitherFunc     func(img image.Image) image.Image // optional dither function
+	Threshold      uint8                             // threshold for dark pixels, default is 128
 }
 
 var LXD02Rasteriser = &Raster{
@@ -69,7 +82,8 @@ var LXD02Rasteriser = &Raster{
 		n := byte(packetIndex & 0xFF)
 		return []byte{0x55, m, n} // 55 m n
 	},
-	Terminator: 0x00, // 00
+	Terminator: 0x00,             // 00
+	Threshold:  DefaultThreshold, // default threshold for dark pixels
 }
 
 func (r *Raster) Rasterise(src image.Image) [][]byte {
@@ -103,7 +117,7 @@ func (r *Raster) Rasterise(src image.Image) [][]byte {
 	rasteriseLine := func(img image.Image, y int) []byte {
 		lineBytes := make([]byte, lineWidthBytes)
 		for x := range lineWidthPixels {
-			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y)
+			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y, r.Threshold)
 			if bit {
 				lineBytes[x/8] |= (1 << (7 - (x % 8)))
 			}
@@ -152,74 +166,10 @@ func rasterizeImage(src image.Image) [][]byte {
 	return LXD02Rasteriser.Rasterise(src)
 }
 
-func rasterizeImage2(src image.Image) [][]byte {
-	const (
-		msgPrefixSz     = 3 // 55 m n
-		msgDataSz       = 96
-		msgTerminatorSz = 1 // 00
-		msgPayloadSz    = msgPrefixSz + msgDataSz + msgTerminatorSz
-
-		lineWidthPixels = 384
-		lineWidthBytes  = lineWidthPixels / 8
-		linesPerPacket  = 2
-	)
-
-	img := resizeAndDither(src, lineWidthPixels, ditherimg)
-
-	bounds := img.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-
-	if width > lineWidthPixels {
-		panic("image width exceeds 384px limit")
+func pixelBit(img image.Image, x, y int, threshold uint8) bool {
+	if threshold == 0 {
+		threshold = DefaultThreshold // default threshold for dark pixels
 	}
-
-	rasteriseLine := func(img image.Image, y int) []byte {
-		lineBytes := make([]byte, lineWidthBytes)
-		for x := range lineWidthPixels {
-			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y)
-			if bit {
-				lineBytes[x/8] |= (1 << (7 - (x % 8)))
-			}
-		}
-		return lineBytes
-	}
-
-	// Pad height to even number for 2-line packets
-	if height%2 != 0 {
-		height++
-	}
-
-	numPackets := height / linesPerPacket
-	packets := make([][]byte, 0, numPackets)
-
-	for packetIndex := range numPackets {
-		y0 := packetIndex * 2
-		y1 := y0 + 1
-
-		row := make([]byte, 0, msgPayloadSz)
-		m := byte((packetIndex >> 8) & 0xFF)
-		n := byte(packetIndex & 0xFF)
-
-		row = append(row, 0x55, m, n)
-
-		// First line (y0)
-		lineBytes := rasteriseLine(img, y0)
-		row = append(row, lineBytes...)
-
-		// Second line (y1)
-		lineBytes = rasteriseLine(img, y1)
-		row = append(row, lineBytes...)
-
-		row = append(row, 0x00) // terminating byte
-
-		packets = append(packets, row)
-	}
-
-	return packets
-}
-
-func pixelBit(img image.Image, x, y int) bool {
 	if y >= img.Bounds().Dy() {
 		return false // padded line
 	}
@@ -229,10 +179,13 @@ func pixelBit(img image.Image, x, y int) bool {
 
 	c := img.At(x, y)
 	gray := colorToGray(c)
-	return gray < 128 // dark pixels are "on"
+	return gray < threshold // dark pixels are "on"
 }
 
 func colorToGray(c color.Color) uint8 {
+	if gray, ok := c.(color.Gray); ok {
+		return gray.Y
+	}
 	r, g, b, _ := c.RGBA()
 	gray := (299*r + 587*g + 114*b) / 1000
 	return uint8(gray >> 8)

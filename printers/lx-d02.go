@@ -3,7 +3,6 @@ package printers
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -15,37 +14,63 @@ import (
 )
 
 const (
+	// DefaultPrintDelay is the default interval between sending packets to the printer
+	DefaultPrintDelay = 7 * time.Millisecond
+)
+
+const (
 	txChar = "0000ffe1-0000-1000-8000-00805f9b34fb" // TX Characteristic UUID
 	rxChar = "0000ffe2-0000-1000-8000-00805f9b34fb" // RX Characteristic UUID
 )
 
+const (
+	sendRetryDelay  = 10 * time.Millisecond  // Delay between sends to avoid overwhelming the printer
+	maxRetries      = 3                      // Maximum retries for sending data
+	cooldownDelay   = 100 * time.Millisecond // Cooldown period after certain notifications
+	responseTimeout = 3 * time.Second        // Timeout for sending data and waiting for response
+)
+
 type LXD02 struct {
-	dev        bluetooth.Device
-	tx         bluetooth.DeviceCharacteristic
-	rx         bluetooth.DeviceCharacteristic
-	buffer     [][]byte
-	brightness uint8 // 0-6
+	dev    bluetooth.Device
+	tx     bluetooth.DeviceCharacteristic
+	rx     bluetooth.DeviceCharacteristic
+	buffer [][]byte
 
 	stateMu     sync.Mutex
 	state       printerState
 	eventCh     chan fsmEvent
 	doneCh      chan struct{}
-	printCtx    context.Context
 	printCancel context.CancelFunc
 
 	responseMu    sync.Mutex
 	waitingPrefix []byte
 	responseCh    chan []byte
+
+	options lxd02options
 }
 
-type Option func(*LXD02)
+type lxd02options struct {
+	energy        uint8         // 0-6
+	printInterval time.Duration // Interval between sending data packets
+}
 
-func WithBrightness(brightness uint8) Option {
-	if brightness > 6 {
-		brightness = 6 // Cap brightness to 6
+type Option func(*lxd02options)
+
+func WithEnergy(v uint8) Option {
+	if v > 6 {
+		v = 6 // Cap brightness to 6
 	}
-	return func(p *LXD02) {
-		p.brightness = brightness
+	return func(o *lxd02options) {
+		o.energy = v
+	}
+}
+
+func WithPrintInterval(d time.Duration) Option {
+	if d <= 0 || 10*time.Second < d {
+		d = DefaultPrintDelay // Default to 7ms if invalid
+	}
+	return func(o *lxd02options) {
+		o.printInterval = d
 	}
 }
 
@@ -64,13 +89,18 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 		return nil, fmt.Errorf("failed to locate services: %w", err)
 	}
 
-	prn := &LXD02{
-		dev: device,
-		tx:  txrx.tx,
-		rx:  txrx.rx,
+	var opts = lxd02options{
+		energy:        2, // Default energy level
+		printInterval: DefaultPrintDelay,
 	}
 	for _, o := range opt {
-		o(prn)
+		o(&opts)
+	}
+	prn := &LXD02{
+		dev:     device,
+		tx:      txrx.tx,
+		rx:      txrx.rx,
+		options: opts,
 	}
 
 	notifyCh := make(chan lxd02notification, 10)
@@ -83,8 +113,6 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 	slog.Info("Connected to printer", "address", device.Address, "mac", device.Address)
 	return prn, nil
 }
-
-var lxd02endian = binary.BigEndian
 
 func (p *LXD02) notificationCallback(notifyCh chan<- lxd02notification) func(value []byte) {
 	return func(value []byte) {
@@ -110,13 +138,9 @@ func (p *LXD02) notificationCallback(notifyCh chan<- lxd02notification) func(val
 		}
 		p.responseMu.Unlock()
 
-		var prefix uint16
-		if _, err := binary.Decode(value[:2], lxd02endian, &prefix); err != nil {
-			slog.Error("Failed to decode prefix", "error", err)
-			return
-		}
+		var prefix = notification(uint16(value[0])<<8 | uint16(value[1]))
 
-		switch notification(prefix) {
+		switch prefix {
 		case ntStatus:
 			notifyCh <- lxd02notification{prefix: ntStatus, data: value}
 		case ntFinished:
@@ -124,7 +148,7 @@ func (p *LXD02) notificationCallback(notifyCh chan<- lxd02notification) func(val
 		case ntRetransmit:
 			notifyCh <- lxd02notification{prefix: ntRetransmit, data: value}
 		case ntCooldown:
-			time.Sleep(100 * time.Millisecond) // Cooldown period
+			time.Sleep(cooldownDelay) // Cooldown period
 		case ntHold:
 			notifyCh <- lxd02notification{prefix: ntHold, data: value}
 		default:
@@ -191,7 +215,7 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 			return
 		case ntf := <-notifyCh:
 			lg := slog.With("instruction", ntf.prefix, "data", fmt.Sprintf("% x", ntf.data))
-			lg.DebugContext(ctx, "command")
+			lg.DebugContext(ctx, "received notification")
 			switch ntf.prefix {
 			case ntStatus:
 				st, err := parseStatus(ntf.data)
@@ -259,13 +283,12 @@ func (p *LXD02) printBuffer(start int) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	p.printCtx = ctx
 	p.printCancel = cancel
 
 	go func() {
 		defer cancel()
 
-		t := time.NewTicker(30 * time.Millisecond)
+		t := time.NewTicker(p.options.printInterval)
 		defer t.Stop()
 
 		for i := start; i < len(p.buffer); i++ {
@@ -293,11 +316,11 @@ func (p *LXD02) sendInitSequence() {
 		{0x5a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 		{0x5a, 0x0a, 0xB5, 0x7C, 0x4C, 0xB8, 0xAE, 0x70, 0x51, 0xE6, 0xD3, 0x06},
 		{0x5a, 0x0b, 0x66, 0x3B, 0x62, 0x8C, 0x1A, 0x69, 0xBF, 0x54, 0x74, 0x4C},
-		{0x5a, 0x0c, p.brightness},
+		{0x5a, 0x0c, p.options.energy},
 	}
 	for _, cmd := range initSeq {
 		expectPrefix := cmd[:2]
-		resp, err := p.sendAndWait(cmd, expectPrefix, 3*time.Second)
+		resp, err := p.sendAndWait(cmd, expectPrefix, responseTimeout)
 		if err != nil {
 			p.eventCh <- fsmEvent{kind: eventError}
 			return
@@ -315,7 +338,6 @@ func extractRetryPacketIndex(data []byte) int {
 }
 
 func (p *LXD02) send(data []byte) error {
-	const maxRetries = 3
 
 	for i := range maxRetries {
 		_, err := p.tx.WriteWithoutResponse(data)
@@ -323,7 +345,7 @@ func (p *LXD02) send(data []byte) error {
 			return nil
 		}
 		slog.Warn("send failed, retrying", "attempt", i+1, "error", err)
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(sendRetryDelay)
 	}
 	return errors.New("BLE write failed after retries")
 }

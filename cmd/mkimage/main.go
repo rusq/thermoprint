@@ -65,7 +65,6 @@ func mkimage(filename string, img drawFunc) error {
 
 func slantFunc(img *image.Paletted, dx, dy int) {
 	// Draw a slanting line from top-left to bottom-right
-	img.SetColorIndex(16, 8, 0)
 	for i := 0; i < dy; i++ {
 		img.SetColorIndex(i, i, 0)
 	}
