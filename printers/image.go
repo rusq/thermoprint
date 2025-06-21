@@ -4,12 +4,15 @@ import (
 	"image"
 	"image/color"
 
+	"github.com/makeworld-the-better-one/dither/v2"
 	"golang.org/x/image/draw"
 )
 
-func resizeAndDither(img image.Image, targetWidth int) image.Image {
+func resize(img image.Image, targetWidth int) image.Image {
 	var resized draw.Image
 	if img.Bounds().Dx() <= targetWidth {
+		// We don't upscale, but place the image on a white canvas in the upper
+		// left corner
 		targetHeight := img.Bounds().Dy()
 		resized = image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
 		// fill canvas with white
@@ -21,28 +24,73 @@ func resizeAndDither(img image.Image, targetWidth int) image.Image {
 		// Resize the image to the target width while maintaining aspect ratio
 		targetHeight := (img.Bounds().Dy() * targetWidth) / img.Bounds().Dx()
 		resized = image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
-		draw.BiLinear.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Over, nil)
+		draw.CatmullRom.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Over, nil)
 	}
+	return resized
+}
 
-	// Dither the resized image to 1-bit grayscale
-	dithered := image.NewPaletted(resized.Bounds(), []color.Color{color.Black, color.White})
-	draw.FloydSteinberg.Draw(dithered, dithered.Bounds(), resized, image.Point{})
+// ditherimg is the default dither function used in the rasteriser.
+func ditherimg(img image.Image) image.Image {
+	return dFloydSteinberg(img)
+}
 
+func dFloydSteinberg(img image.Image) image.Image {
+	dithered := image.NewPaletted(img.Bounds(), []color.Color{color.Black, color.White})
+	draw.FloydSteinberg.Draw(dithered, dithered.Bounds(), img, image.Point{})
 	return dithered
 }
 
-func rasterizeImage(src image.Image) [][]byte {
-	const (
-		packetPrefixSize  = 3 // 55 m n
-		packetDataSize    = 96
-		packetTerminator  = 1 // 00
-		lineWidthPixels   = 384
-		lineWidthBytes    = lineWidthPixels / 8
-		linesPerPacket    = 2
-		packetPayloadSize = packetPrefixSize + packetDataSize + packetTerminator
+func dStucki(img image.Image) image.Image {
+	dithered := image.NewRGBA(img.Bounds())
+	d := dither.NewDitherer([]color.Color{color.Black, color.White})
+	// d.Mapper = dither.Bayer(8, 8, 1.0)
+	d.Matrix = dither.Stucki
+	d.Draw(dithered, dithered.Bounds(), img, image.Point{})
+	return dithered
+}
+
+func resizeAndDither(img image.Image, targetWidth int, ditherFn func(image.Image) image.Image) image.Image {
+	return ditherFn(resize(img, targetWidth))
+}
+
+type Raster struct {
+	LineWidth      int
+	LinesPerPacket int
+	PrefixFunc     func(packetIndex int) []byte      // returns 55 m n
+	Terminator     byte                              // 00
+	DitherFunc     func(img image.Image) image.Image // optional dither function
+}
+
+var LXD02Rasteriser = &Raster{
+	LineWidth:      384, // 48 bytes
+	LinesPerPacket: 2,   // 2 lines per packet
+	PrefixFunc: func(packetIndex int) []byte {
+		m := byte((packetIndex >> 8) & 0xFF)
+		n := byte(packetIndex & 0xFF)
+		return []byte{0x55, m, n} // 55 m n
+	},
+	Terminator: 0x00, // 00
+}
+
+func (r *Raster) Rasterise(src image.Image) [][]byte {
+	var (
+		msgPrefixSz     = len(r.PrefixFunc(0)) // 55 m n
+		msgTerminatorSz = 1                    // 00
+
+		lineWidthPixels = r.LineWidth
+		lineWidthBytes  = lineWidthPixels / 8
+		linesPerMsg     = r.LinesPerPacket
+
+		msgDataSz    = lineWidthBytes * linesPerMsg
+		msgPayloadSz = msgPrefixSz + msgDataSz + msgTerminatorSz // 55 m n + data + 00
 	)
 
-	img := resizeAndDither(src, lineWidthPixels)
+	dfn := ditherimg
+	if r.DitherFunc != nil {
+		dfn = r.DitherFunc
+	}
+
+	img := resizeAndDither(src, lineWidthPixels, dfn)
 
 	bounds := img.Bounds()
 	width := bounds.Dx()
@@ -50,6 +98,91 @@ func rasterizeImage(src image.Image) [][]byte {
 
 	if width > lineWidthPixels {
 		panic("image width exceeds 384px limit")
+	}
+
+	rasteriseLine := func(img image.Image, y int) []byte {
+		lineBytes := make([]byte, lineWidthBytes)
+		for x := range lineWidthPixels {
+			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y)
+			if bit {
+				lineBytes[x/8] |= (1 << (7 - (x % 8)))
+			}
+		}
+		return lineBytes
+	}
+
+	// Pad height to even number for 2-line packets
+	if height%2 != 0 {
+		height++
+	}
+
+	numPackets := height / linesPerMsg
+	packets := make([][]byte, 0, numPackets)
+
+	for packetIndex := range numPackets {
+		y0 := packetIndex * 2
+		y1 := y0 + 1
+
+		row := make([]byte, 0, msgPayloadSz)
+
+		row = append(row, r.PrefixFunc(packetIndex)...)
+
+		// First line (y0)
+		lineBytes := rasteriseLine(img, y0)
+		row = append(row, lineBytes...)
+
+		// Second line (y1)
+		lineBytes = rasteriseLine(img, y1)
+		row = append(row, lineBytes...)
+
+		row = append(row, r.Terminator) // terminating byte
+
+		packets = append(packets, row)
+	}
+
+	return packets
+}
+
+func rasterizeImage(src image.Image) [][]byte {
+	if src == nil {
+		return nil
+	}
+
+	// Use the LXD02 rasteriser by default
+	return LXD02Rasteriser.Rasterise(src)
+}
+
+func rasterizeImage2(src image.Image) [][]byte {
+	const (
+		msgPrefixSz     = 3 // 55 m n
+		msgDataSz       = 96
+		msgTerminatorSz = 1 // 00
+		msgPayloadSz    = msgPrefixSz + msgDataSz + msgTerminatorSz
+
+		lineWidthPixels = 384
+		lineWidthBytes  = lineWidthPixels / 8
+		linesPerPacket  = 2
+	)
+
+	img := resizeAndDither(src, lineWidthPixels, ditherimg)
+
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	if width > lineWidthPixels {
+		panic("image width exceeds 384px limit")
+	}
+
+	rasteriseLine := func(img image.Image, y int) []byte {
+		lineBytes := make([]byte, lineWidthBytes)
+		for x := range lineWidthPixels {
+			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y)
+			if bit {
+				lineBytes[x/8] |= (1 << (7 - (x % 8)))
+			}
+		}
+		return lineBytes
 	}
 
 	// Pad height to even number for 2-line packets
@@ -64,30 +197,18 @@ func rasterizeImage(src image.Image) [][]byte {
 		y0 := packetIndex * 2
 		y1 := y0 + 1
 
-		row := make([]byte, 0, packetPayloadSize)
+		row := make([]byte, 0, msgPayloadSz)
 		m := byte((packetIndex >> 8) & 0xFF)
 		n := byte(packetIndex & 0xFF)
 
 		row = append(row, 0x55, m, n)
 
 		// First line (y0)
-		lineBytes := make([]byte, lineWidthBytes)
-		for x := range lineWidthPixels {
-			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y0)
-			if bit {
-				lineBytes[x/8] |= (1 << (7 - (x % 8)))
-			}
-		}
+		lineBytes := rasteriseLine(img, y0)
 		row = append(row, lineBytes...)
 
 		// Second line (y1)
-		lineBytes = make([]byte, lineWidthBytes)
-		for x := 0; x < lineWidthPixels; x++ {
-			bit := pixelBit(img, bounds.Min.X+x, bounds.Min.Y+y1)
-			if bit {
-				lineBytes[x/8] |= (1 << (7 - (x % 8)))
-			}
-		}
+		lineBytes = rasteriseLine(img, y1)
 		row = append(row, lineBytes...)
 
 		row = append(row, 0x00) // terminating byte

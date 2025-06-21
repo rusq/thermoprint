@@ -36,6 +36,14 @@ func init() {
 	flag.UintVar(&cliflags.brightness, "b", 2, "Brightness `level` (0-6)")
 }
 
+func init() {
+	flag.Usage = func() {
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [flags] <image>\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+}
+
 func main() {
 	if err := adapter.Enable(); err != nil {
 		log.Fatalf("Failed to enable Bluetooth adapter: %v", err)
@@ -47,12 +55,13 @@ func main() {
 	}
 
 	if flag.NArg() != 1 {
-		log.Fatal("Usage: thermoprint <image>")
+		flag.Usage()
+		os.Exit(2)
 	}
-	imagefile := flag.Arg(0)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	imagefile := flag.Arg(0)
 	if err := run(ctx, cliflags, imagefile); err != nil {
 		log.Fatal(err)
 	}

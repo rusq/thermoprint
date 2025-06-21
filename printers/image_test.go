@@ -41,6 +41,7 @@ func Test_resizeAndDither(t *testing.T) {
 	type args struct {
 		// img         image.Image
 		targetWidth int
+		ditherFn    func(image.Image) image.Image
 	}
 	tests := []struct {
 		name   string
@@ -50,14 +51,14 @@ func Test_resizeAndDither(t *testing.T) {
 	}{
 		{
 			name:   "Resize and dither",
-			input:  "../media/test1.png",
-			args:   args{targetWidth: 384},
-			output: "../media/test1_out.png",
+			input:  "../media/harold.jpg",
+			args:   args{targetWidth: 384, ditherFn: ditherimg},
+			output: "../media/harold_out.png",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := resizeAndDither(openImage(t, tt.input), tt.args.targetWidth)
+			out := resizeAndDither(openImage(t, tt.input), tt.args.targetWidth, tt.args.ditherFn)
 			saveImage(t, out, tt.output)
 		})
 	}
