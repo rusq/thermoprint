@@ -6,10 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/draw"
+	"image/png"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/golang/freetype"
+	"github.com/rusq/fontpic"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/goregular"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -31,10 +38,11 @@ const (
 )
 
 type LXD02 struct {
-	dev    bluetooth.Device
-	tx     bluetooth.DeviceCharacteristic
-	rx     bluetooth.DeviceCharacteristic
-	buffer [][]byte
+	dev        bluetooth.Device
+	tx         bluetooth.DeviceCharacteristic
+	rx         bluetooth.DeviceCharacteristic
+	buffer     [][]byte
+	rasteriser Rasteriser // Interface for rasterizing images
 
 	stateMu     sync.Mutex
 	state       printerState
@@ -97,10 +105,11 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 		o(&opts)
 	}
 	prn := &LXD02{
-		dev:     device,
-		tx:      txrx.tx,
-		rx:      txrx.rx,
-		options: opts,
+		dev:        device,
+		tx:         txrx.tx,
+		rx:         txrx.rx,
+		options:    opts,
+		rasteriser: LXD02Rasteriser, // Default rasteriser for LXD02
 	}
 
 	notifyCh := make(chan lxd02notification, 10)
@@ -257,7 +266,7 @@ func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 	p.doneCh = make(chan struct{})
 	p.eventCh = make(chan fsmEvent, 10)
 
-	p.loadBuffer(rasterizeImage(img))
+	p.loadBuffer(p.rasteriser.Rasterise(img))
 	go p.runFSM(ctx)
 
 	p.eventCh <- fsmEvent{kind: eventStart}
@@ -270,6 +279,47 @@ func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 		p.eventCh <- fsmEvent{kind: eventCancel}
 		return errors.New("print job timed out or cancelled")
 	}
+}
+
+func (p *LXD02) PrintText(ctx context.Context, text string) error {
+	c := fontpic.NewCanvas(fontpic.Font8x16).
+		WithBackground(image.White).
+		WithForeground(image.Black).
+		RenderText([]byte(text))
+	return p.PrintImage(ctx, c.Image())
+}
+
+func (p *LXD02) PrintTextTTF(ctx context.Context, text string) error {
+	// rasterizeText
+	const fontSize = 8 // font size in points
+	fnt, err := freetype.ParseFont(goregular.TTF)
+	if err != nil {
+		return fmt.Errorf("failed to parse font: %w", err)
+	}
+	fg, bg := image.Black, image.White
+	img := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), 48)) // 384x48 for LXD02
+	draw.Draw(img, img.Bounds(), bg, image.Point{}, draw.Src)
+	canvas := freetype.NewContext()
+	canvas.SetDPI(float64(p.rasteriser.DPI())) // 203 DPI for LXD02
+	canvas.SetFont(fnt)
+	canvas.SetFontSize(fontSize)
+	canvas.SetClip(img.Bounds())
+	canvas.SetDst(img)
+	canvas.SetSrc(fg)
+	canvas.SetHinting(font.HintingNone)
+	if _, err := canvas.DrawString(text, freetype.Pt(0, int(canvas.PointToFixed(fontSize)>>6))); err != nil {
+		return fmt.Errorf("failed to draw text: %w", err)
+	}
+	out, err := os.Create("temp_print_image.png")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary image file: %w", err)
+	}
+	defer out.Close()
+	if err := png.Encode(out, img); err != nil {
+		return fmt.Errorf("failed to encode image: %w", err)
+	}
+	// p.rasteriser.SetDitherFunc(DitherThresholdFn(DefaultThreshold))
+	return p.PrintImage(ctx, img)
 }
 
 var errBufferEmpty = errors.New("buffer is empty")

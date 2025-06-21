@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	DefaultLineWidth = 384 // 48 bytes, 384 pixels wide
 	DefaultThreshold = 128 // Default threshold for dark pixels
 )
 
@@ -66,7 +65,8 @@ func resizeAndDither(img image.Image, targetWidth int, ditherFn func(image.Image
 }
 
 type Raster struct {
-	LineWidth      int
+	Width          int
+	Dpi            int
 	LinesPerPacket int
 	PrefixFunc     func(packetIndex int) []byte      // returns 55 m n
 	Terminator     byte                              // 00
@@ -74,8 +74,35 @@ type Raster struct {
 	Threshold      uint8                             // threshold for dark pixels, default is 128
 }
 
+type Rasteriser interface {
+	Rasterise(src image.Image) [][]byte                 // returns a slice of byte slices, each representing a packet
+	DPI() int                                           // returns the DPI of the rasteriser
+	LineWidth() int                                     // returns the line width in pixels
+	SetDitherFunc(fn func(img image.Image) image.Image) // sets the dither function
+}
+
+func DitherThresholdFn(threshold uint8) func(img image.Image) image.Image {
+	return func(img image.Image) image.Image {
+		if threshold == 0 {
+			threshold = DefaultThreshold // default threshold for dark pixels
+		}
+		trg := image.NewPaletted(img.Bounds(), []color.Color{color.Black, color.White})
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+				if pixelBit(img, x, y, threshold) {
+					trg.SetColorIndex(x, y, 0) // black
+				} else {
+					trg.SetColorIndex(x, y, 1) // white
+				}
+			}
+		}
+		return trg
+	}
+}
+
 var LXD02Rasteriser = &Raster{
-	LineWidth:      384, // 48 bytes
+	Width:          384, // 48 bytes
+	Dpi:            203, // 203 DPI
 	LinesPerPacket: 2,   // 2 lines per packet
 	PrefixFunc: func(packetIndex int) []byte {
 		m := byte((packetIndex >> 8) & 0xFF)
@@ -84,6 +111,23 @@ var LXD02Rasteriser = &Raster{
 	},
 	Terminator: 0x00,             // 00
 	Threshold:  DefaultThreshold, // default threshold for dark pixels
+	DitherFunc: dFloydSteinberg,  // default dither function
+}
+
+func (r *Raster) DPI() int {
+	return r.Dpi
+}
+
+func (r *Raster) LineWidth() int {
+	return r.Width
+}
+
+func (r *Raster) SetDitherFunc(fn func(img image.Image) image.Image) {
+	if fn == nil {
+		r.DitherFunc = dFloydSteinberg // reset to default if nil
+	} else {
+		r.DitherFunc = fn
+	}
 }
 
 func (r *Raster) Rasterise(src image.Image) [][]byte {
@@ -91,7 +135,7 @@ func (r *Raster) Rasterise(src image.Image) [][]byte {
 		msgPrefixSz     = len(r.PrefixFunc(0)) // 55 m n
 		msgTerminatorSz = 1                    // 00
 
-		lineWidthPixels = r.LineWidth
+		lineWidthPixels = r.Width
 		lineWidthBytes  = lineWidthPixels / 8
 		linesPerMsg     = r.LinesPerPacket
 
