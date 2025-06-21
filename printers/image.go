@@ -3,7 +3,10 @@ package printers
 import (
 	"image"
 	"image/color"
+	"math"
+	"sort"
 
+	"github.com/disintegration/imaging"
 	"github.com/makeworld-the-better-one/dither/v2"
 	"golang.org/x/image/draw"
 )
@@ -11,6 +14,22 @@ import (
 const (
 	DefaultThreshold = 128 // Default threshold for dark pixels
 )
+
+var ditherFunctions = map[string]func(image.Image) image.Image{
+	"floyd-steinberg": dFloydSteinberg,
+	"atkinson":        dAtkinson,
+	"stucki":          dStucki,
+	"bayer":           dBayer,
+}
+
+func AllDitherFunctions() []string {
+	keys := make([]string, 0, len(ditherFunctions))
+	for k := range ditherFunctions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // sort for consistent order
+	return keys
+}
 
 func resize(img image.Image, targetWidth int) image.Image {
 	var resized draw.Image
@@ -35,28 +54,38 @@ func resize(img image.Image, targetWidth int) image.Image {
 
 // ditherimg is the default dither function used in the rasteriser.
 func ditherimg(img image.Image) image.Image {
-	return dFloydSteinberg(img)
+	return dAtkinson(img) // default dithering function
 }
 
 func dFloydSteinberg(img image.Image) image.Image {
+	dstImage := imaging.AdjustGamma(img, 1.5)
 	dithered := image.NewPaletted(img.Bounds(), []color.Color{color.Black, color.White})
-	draw.FloydSteinberg.Draw(dithered, dithered.Bounds(), img, image.Point{})
+	// increase brightness of the image to make it more suitable for dithering
+	draw.FloydSteinberg.Draw(dithered, dithered.Bounds(), dstImage, image.Point{})
+	return dithered
+}
+
+func dAtkinson(img image.Image) image.Image {
+	dithered := image.NewRGBA(img.Bounds())
+	d := dither.NewDitherer([]color.Color{color.Black, color.White})
+	d.Matrix = dither.Atkinson
+	d.Draw(dithered, dithered.Bounds(), imaging.AdjustGamma(img, 3.0), image.Point{})
 	return dithered
 }
 
 func dStucki(img image.Image) image.Image {
 	dithered := image.NewRGBA(img.Bounds())
 	d := dither.NewDitherer([]color.Color{color.Black, color.White})
-	d.Matrix = dither.Atkinson
-	d.Draw(dithered, dithered.Bounds(), img, image.Point{})
+	d.Matrix = dither.Stucki
+	d.Draw(dithered, dithered.Bounds(), imaging.AdjustGamma(img, 3.5), image.Point{})
 	return dithered
 }
 
 func dBayer(img image.Image) image.Image {
-	dithered := image.NewPaletted(img.Bounds(), []color.Color{color.Black, color.White})
+	dithered := image.NewRGBA(img.Bounds())
 	d := dither.NewDitherer([]color.Color{color.Black, color.White})
 	d.Mapper = dither.Bayer(8, 8, 1.0) // 8x8 Bayer matrix
-	d.Draw(dithered, dithered.Bounds(), img, image.Point{})
+	d.Draw(dithered, dithered.Bounds(), imaging.AdjustGamma(img, 3.5), image.Point{})
 	return dithered
 }
 
@@ -100,20 +129,6 @@ func DitherThresholdFn(threshold uint8) func(img image.Image) image.Image {
 	}
 }
 
-var LXD02Rasteriser = &Raster{
-	Width:          384, // 48 bytes
-	Dpi:            203, // 203 DPI
-	LinesPerPacket: 2,   // 2 lines per packet
-	PrefixFunc: func(packetIndex int) []byte {
-		m := byte((packetIndex >> 8) & 0xFF)
-		n := byte(packetIndex & 0xFF)
-		return []byte{0x55, m, n} // 55 m n
-	},
-	Terminator: 0x00,             // 00
-	Threshold:  DefaultThreshold, // default threshold for dark pixels
-	DitherFunc: dFloydSteinberg,  // default dither function
-}
-
 func (r *Raster) DPI() int {
 	return r.Dpi
 }
@@ -148,7 +163,13 @@ func (r *Raster) Rasterise(src image.Image) [][]byte {
 		dfn = r.DitherFunc
 	}
 
-	img := resizeAndDither(src, lineWidthPixels, dfn)
+	resized := resize(src, lineWidthPixels)
+	img := resized
+	if !isDocument(resized, 50, 200) {
+		// If the image is not a document, apply dithering
+		img = dfn(resized)
+	}
+	debugSaveImage(img, "rasterised.png")
 
 	bounds := img.Bounds()
 	width := bounds.Dx()
@@ -172,6 +193,8 @@ func (r *Raster) Rasterise(src image.Image) [][]byte {
 	// Pad height to even number for 2-line packets
 	if height%2 != 0 {
 		height++
+	} else {
+		height += 2 // ensure we have at least 2 lines for the last packet
 	}
 
 	numPackets := height / linesPerMsg
@@ -201,15 +224,6 @@ func (r *Raster) Rasterise(src image.Image) [][]byte {
 	return packets
 }
 
-func rasterizeImage(src image.Image) [][]byte {
-	if src == nil {
-		return nil
-	}
-
-	// Use the LXD02 rasteriser by default
-	return LXD02Rasteriser.Rasterise(src)
-}
-
 func pixelBit(img image.Image, x, y int, threshold uint8) bool {
 	if threshold == 0 {
 		threshold = DefaultThreshold // default threshold for dark pixels
@@ -233,4 +247,46 @@ func colorToGray(c color.Color) uint8 {
 	r, g, b, _ := c.RGBA()
 	gray := (299*r + 587*g + 114*b) / 1000
 	return uint8(gray >> 8)
+}
+
+func isDocument(img image.Image, darkThreshold, lightThreshold uint8) bool {
+	if img == nil {
+		return false
+	}
+	if darkThreshold == 0 {
+		darkThreshold = 50
+	}
+	if lightThreshold == 0 {
+		lightThreshold = 200
+	}
+	bounds := img.Bounds()
+	dst := image.NewGray(img.Bounds())
+	draw.Draw(dst, bounds, img, image.Point{}, draw.Src)
+	// create histogram of pixel brightness
+	histogram := make([]int, math.MaxUint8+1)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			c := dst.At(x, y).(color.Gray)
+			histogram[c.Y]++
+		}
+	}
+	// sum all dark pixels in the range [0, darkThreshold)
+	var (
+		darkPixelCount  float64
+		lightPixelCount float64
+		totalPixelCount float64
+	)
+	for i, count := range histogram {
+		totalPixelCount += float64(count)
+		if i < int(darkThreshold) {
+			darkPixelCount += float64(count)
+		} else if i >= int(lightThreshold) {
+			lightPixelCount += float64(count)
+		}
+	}
+	if totalPixelCount == 0 {
+		return false // no pixels to analyze
+	}
+
+	return (darkPixelCount+lightPixelCount)/totalPixelCount > 0.85
 }

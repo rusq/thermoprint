@@ -3,6 +3,7 @@ module github.com/rusq/thermoprint
 go 1.24.2
 
 require (
+	github.com/disintegration/imaging v1.6.2
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
 	github.com/makeworld-the-better-one/dither/v2 v2.4.0
 	github.com/rusq/fontpic v0.0.3

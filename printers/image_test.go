@@ -102,12 +102,24 @@ func TestRaster_Rasterise(t *testing.T) {
 				append(append(append([]byte{0x55, 0x00, 0x01}, bytes.Repeat([]byte{0b01010101}, 48)...), bytes.Repeat([]byte{0b10101010}, 48)...), 0x00),
 			},
 		},
+		{
+			name:   "rasterise text",
+			fields: *LXD02Rasteriser,
+			args: args{
+				src: openImage(t, "../media/rasterised.png"), // Use a sample image
+			},
+			want: [][]byte{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &tt.fields
-			if got := r.Rasterise(tt.args.src); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Raster.Rasterise() = %v, want %v", got, tt.want)
+			got := r.Rasterise(tt.args.src)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Raster.Rasterise() = [% x], want [% x]", got, tt.want)
+				if err := os.WriteFile("test_rasterised.bin", bytes.Join(got, []byte{'\n'}), 0644); err != nil {
+					t.Fatalf("failed to write output file: %v", err)
+				}
 			}
 		})
 	}

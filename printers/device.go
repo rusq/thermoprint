@@ -31,7 +31,7 @@ func LocateDevice(ctx context.Context, adapter *bluetooth.Adapter, sp SearchPara
 	if err != nil {
 		return d, fmt.Errorf("failed to start scanning: %w", err)
 	}
-	slog.InfoContext(ctx, "Scanning complete")
+	slog.DebugContext(ctx, "Scanning complete")
 	return d, nil
 }
 

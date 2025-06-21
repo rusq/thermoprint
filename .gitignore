@@ -2,4 +2,6 @@ media
 __debug*
 *~
 .*~
-
+*.png
+*.bin
+.DS_Store

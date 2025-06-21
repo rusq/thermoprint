@@ -28,13 +28,15 @@ type config struct {
 	printDelay time.Duration
 	imageFile  string
 	text       string
+	pattern    string // test pattern to print
+	crop       bool   // crop image to printer width instead of resizing
+	dither     string // dithering algorithm to use
 	verbose    bool
 }
 
 var cliflags config
 
 func init() {
-	os.Setenv("DEBUG", "1") // Set DEBUG environment variable for verbose logging
 	flag.StringVar(&cliflags.Name, "p", "LX-D02", "Printer name to use")
 	flag.StringVar(&cliflags.MACAddress, "mac", "", "MAC address of the printer")
 	flag.BoolVar(&cliflags.verbose, "v", os.Getenv("DEBUG") == "1", "Enable verbose logging")
@@ -42,6 +44,9 @@ func init() {
 	flag.DurationVar(&cliflags.printDelay, "d", printers.DefaultPrintDelay, "Delay between print commands")
 	flag.StringVar(&cliflags.imageFile, "i", "", "Image file to print (PNG or JPEG)")
 	flag.StringVar(&cliflags.text, "t", "", "Text to print (overrides image file)")
+	flag.StringVar(&cliflags.pattern, "pattern", "", "Test pattern to print (e.g. 'LastLineTest')")
+	flag.BoolVar(&cliflags.crop, "crop", false, "Crop image to printer width instead of resizing")
+	flag.StringVar(&cliflags.dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", printers.AllDitherFunctions()))
 }
 
 func init() {
@@ -62,7 +67,7 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
-	if cliflags.imageFile == "" && cliflags.text == "" {
+	if cliflags.imageFile == "" && cliflags.text == "" && cliflags.pattern == "" {
 		flag.Usage()
 		log.Fatal("You must specify either an image file with -i or text to print with -t")
 	}
@@ -76,7 +81,12 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config) error {
-	prn, err := printers.NewLXD02(ctx, adapter, cfg.SearchParameters, printers.WithEnergy(uint8(cfg.energy)), printers.WithPrintInterval(cfg.printDelay))
+	prn, err := printers.NewLXD02(ctx, adapter, cfg.SearchParameters,
+		printers.WithEnergy(uint8(cfg.energy)),
+		printers.WithPrintInterval(cfg.printDelay),
+		printers.WithCrop(cfg.crop),
+		printers.WithDither(cfg.dither),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create printer: %w", err)
 	}
@@ -102,6 +112,10 @@ func run(ctx context.Context, cfg config) error {
 			return fmt.Errorf("failed to decode image: %w", err)
 		}
 		return prn.PrintImage(ctx, img)
+	} else if cfg.pattern != "" {
+		// TODO: this should be a method on the printer
+		return prn.PrintPattern(ctx, cfg.pattern)
+
 	}
 	return fmt.Errorf("no valid input provided, either image or text must be specified")
 }

@@ -10,13 +10,14 @@ import (
 	"image/png"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/golang/freetype"
 	"github.com/rusq/fontpic"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/font/gofont/gomono"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -57,9 +58,25 @@ type LXD02 struct {
 	options lxd02options
 }
 
+var LXD02Rasteriser = &Raster{
+	Width:          384, // 48 bytes
+	Dpi:            203, // 203 DPI
+	LinesPerPacket: 2,   // 2 lines per packet
+	PrefixFunc: func(packetIndex int) []byte {
+		m := byte((packetIndex >> 8) & 0xFF)
+		n := byte(packetIndex & 0xFF)
+		return []byte{0x55, m, n} // 55 m n
+	},
+	Terminator: 0x00,             // 00
+	Threshold:  DefaultThreshold, // default threshold for dark pixels
+	DitherFunc: ditherimg,        // default dither function
+}
+
 type lxd02options struct {
 	energy        uint8         // 0-6
 	printInterval time.Duration // Interval between sending data packets
+	crop          bool          // crop instead of scaling
+	dithername    string        // Name of the dither function to use
 }
 
 type Option func(*lxd02options)
@@ -79,6 +96,22 @@ func WithPrintInterval(d time.Duration) Option {
 	}
 	return func(o *lxd02options) {
 		o.printInterval = d
+	}
+}
+
+func WithCrop(crop bool) Option {
+	return func(o *lxd02options) {
+		o.crop = crop
+	}
+}
+
+func WithDither(name string) Option {
+	return func(o *lxd02options) {
+		_, ok := ditherFunctions[name]
+		if !ok {
+			return
+		}
+		o.dithername = name
 	}
 }
 
@@ -110,6 +143,14 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 		rx:         txrx.rx,
 		options:    opts,
 		rasteriser: LXD02Rasteriser, // Default rasteriser for LXD02
+	}
+	if opts.dithername != "" {
+		ditherFunc, ok := ditherFunctions[opts.dithername]
+		if !ok {
+			return nil, fmt.Errorf("unknown dither function: %s", opts.dithername)
+		}
+		prn.rasteriser.SetDitherFunc(ditherFunc)
+		slog.Debug("Using dither function", "name", opts.dithername)
 	}
 
 	notifyCh := make(chan lxd02notification, 10)
@@ -220,7 +261,7 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Worker context done, exiting")
+			slog.Debug("Worker context done, exiting")
 			return
 		case ntf := <-notifyCh:
 			lg := slog.With("instruction", ntf.prefix, "data", fmt.Sprintf("% x", ntf.data))
@@ -286,13 +327,25 @@ func (p *LXD02) PrintText(ctx context.Context, text string) error {
 		WithBackground(image.White).
 		WithForeground(image.Black).
 		RenderText([]byte(text))
-	return p.PrintImage(ctx, c.Image())
+	img := c.Image()
+	// If the image is larger than the printer's width, crop it
+	if img.Bounds().Dx() > p.rasteriser.LineWidth() {
+		if p.options.crop {
+			slog.Debug("Cropping image to fit printer width", "width", p.rasteriser.LineWidth(), "original_width", img.Bounds().Dx())
+			// Crop the image to fit the printer's width
+			cropped := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), img.Bounds().Dy()))
+			draw.Draw(cropped, cropped.Bounds(), img, image.Point{}, draw.Src)
+			img = cropped
+		}
+	}
+	debugSaveImage(img, "debug_text_image.png") // Save debug image
+	return p.PrintImage(ctx, img)
 }
 
 func (p *LXD02) PrintTextTTF(ctx context.Context, text string) error {
 	// rasterizeText
 	const fontSize = 8 // font size in points
-	fnt, err := freetype.ParseFont(goregular.TTF)
+	fnt, err := freetype.ParseFont(gomono.TTF)
 	if err != nil {
 		return fmt.Errorf("failed to parse font: %w", err)
 	}
@@ -310,16 +363,23 @@ func (p *LXD02) PrintTextTTF(ctx context.Context, text string) error {
 	if _, err := canvas.DrawString(text, freetype.Pt(0, int(canvas.PointToFixed(fontSize)>>6))); err != nil {
 		return fmt.Errorf("failed to draw text: %w", err)
 	}
-	out, err := os.Create("temp_print_image.png")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary image file: %w", err)
-	}
-	defer out.Close()
-	if err := png.Encode(out, img); err != nil {
-		return fmt.Errorf("failed to encode image: %w", err)
-	}
 	// p.rasteriser.SetDitherFunc(DitherThresholdFn(DefaultThreshold))
+	debugSaveImage(img, "debug_text_image.png") //
 	return p.PrintImage(ctx, img)
+}
+
+func debugSaveImage(img image.Image, filename string) {
+	f, err := os.Create(filename)
+	if err != nil {
+		slog.Error("Failed to create debug image file", "filename", filename, "error", err)
+		return
+	}
+	defer f.Close()
+
+	if err := png.Encode(f, img); err != nil {
+		slog.Error("Failed to encode debug image", "filename", filename, "error", err)
+	}
+	slog.Debug("Debug image saved", "filename", filename)
 }
 
 var errBufferEmpty = errors.New("buffer is empty")
@@ -388,8 +448,8 @@ func extractRetryPacketIndex(data []byte) int {
 }
 
 func (p *LXD02) send(data []byte) error {
-
 	for i := range maxRetries {
+		slog.Debug("Sending data", "state", p.state, "attempt", i+1, "data", fmt.Sprintf("% X", data))
 		_, err := p.tx.WriteWithoutResponse(data)
 		if err == nil {
 			return nil
@@ -410,6 +470,8 @@ func (p *LXD02) sendAndWait(data []byte, expectPrefix []byte, timeout time.Durat
 	p.waitingPrefix = expectPrefix
 	p.responseMu.Unlock()
 
+	slog.Debug("Sending data", "state", p.state, "data", fmt.Sprintf("% X", data), "expectPrefix", fmt.Sprintf("% X", expectPrefix))
+
 	if _, err := p.tx.WriteWithoutResponse(data); err != nil {
 		p.responseMu.Lock()
 		p.responseCh = nil
@@ -428,4 +490,29 @@ func (p *LXD02) sendAndWait(data []byte, expectPrefix []byte, timeout time.Durat
 		p.responseMu.Unlock()
 		return nil, fmt.Errorf("timeout waiting for response to % X", expectPrefix)
 	}
+}
+
+// Width returns the maximum width of the print output in pixels.
+func (p *LXD02) Width() int {
+	return p.rasteriser.LineWidth()
+}
+
+func (p *LXD02) PrintPattern(ctx context.Context, pattern string) error {
+	pat, ok := TestPatterns[pattern]
+	if !ok {
+		var names []string
+		for name := range TestPatterns {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		fmt.Fprintf(os.Stderr, "Available test patterns: %v\n", names)
+		return fmt.Errorf("unknown test pattern: %s", pattern)
+	}
+	img := pat(p.rasteriser.LineWidth())
+	if img == nil {
+		return fmt.Errorf("test pattern %s returned nil image", pattern)
+	}
+	debugSaveImage(img, "debug_pattern_image.png") // Save debug image
+
+	return p.PrintImage(ctx, img)
 }

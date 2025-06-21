@@ -145,7 +145,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 				p.eventCh <- fsmEvent{kind: eventError}
 				return
 			}
-			slog.Info("Final end-of-transmission command ack", "response", fmt.Sprintf("% x", resp))
+			slog.Debug("Final end-of-transmission command ack", "response", fmt.Sprintf("% x", resp))
 			p.doneCh <- struct{}{}
 		case eventNotificationHold:
 			// holding
