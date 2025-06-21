@@ -11,13 +11,14 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/golang/freetype"
 	"github.com/rusq/fontpic"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/gomono"
+	"golang.org/x/image/font/inconsolata"
+	"golang.org/x/image/math/fixed"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -342,30 +343,51 @@ func (p *LXD02) PrintText(ctx context.Context, text string) error {
 	return p.PrintImage(ctx, img)
 }
 
-func (p *LXD02) PrintTextTTF(ctx context.Context, text string) error {
-	// rasterizeText
-	const fontSize = 8 // font size in points
-	fnt, err := freetype.ParseFont(gomono.TTF)
-	if err != nil {
-		return fmt.Errorf("failed to parse font: %w", err)
+func (p *LXD02) renderTTF(text string, fontSize, spacing float64) (image.Image, error) {
+	if fontSize <= 0.0 {
+		fontSize = 8.0 // Default font size if not specified
 	}
+	if spacing == 0.0 {
+		spacing = 1.0 // Default line spacing if not specified
+	}
+	face := inconsolata.Regular8x16
+	defer face.Close()
+	// determine line height to calculate image height
+
+	lines := strings.Split(text, "\n")
+	imgHeight := len(lines) * face.Metrics().Height.Ceil()
+	// lineHeight := face.Metrics().Ascent.Ceil() + face.Metrics().Height.Ceil()
+
 	fg, bg := image.Black, image.White
-	img := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), 48)) // 384x48 for LXD02
+	img := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), imgHeight)) // 384x48 for LXD02
 	draw.Draw(img, img.Bounds(), bg, image.Point{}, draw.Src)
-	canvas := freetype.NewContext()
-	canvas.SetDPI(float64(p.rasteriser.DPI())) // 203 DPI for LXD02
-	canvas.SetFont(fnt)
-	canvas.SetFontSize(fontSize)
-	canvas.SetClip(img.Bounds())
-	canvas.SetDst(img)
-	canvas.SetSrc(fg)
-	canvas.SetHinting(font.HintingNone)
-	if _, err := canvas.DrawString(text, freetype.Pt(0, int(canvas.PointToFixed(fontSize)>>6))); err != nil {
-		return fmt.Errorf("failed to draw text: %w", err)
+
+	var d = font.Drawer{
+		Dst:  img,
+		Src:  fg,
+		Face: face,
+		Dot:  fixed.P(0, face.Metrics().Ascent.Ceil()), // Start at the top
 	}
+	var replacer = strings.NewReplacer("\t", "        ")
+	for _, line := range lines {
+		d.DrawString(replacer.Replace(line))
+		d.Dot.X = fixed.I(0)             // Reset X position to the start of the line
+		d.Dot.Y += face.Metrics().Height // + face.Metrics().Ascent
+	}
+	return img, nil
+}
+
+func (p *LXD02) PrintTextTTF(ctx context.Context, text string, fontSize, lineSpacing float64) error {
+	// rasterizeText
+	img, err := p.renderTTF(text, fontSize, lineSpacing)
+	if err != nil {
+		return fmt.Errorf("failed to render TTF text: %w", err)
+	}
+
 	// p.rasteriser.SetDitherFunc(DitherThresholdFn(DefaultThreshold))
 	debugSaveImage(img, "debug_text_image.png") //
 	return p.PrintImage(ctx, img)
+	// return nil
 }
 
 func debugSaveImage(img image.Image, filename string) {

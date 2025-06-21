@@ -24,14 +24,17 @@ var adapter = bluetooth.DefaultAdapter
 
 type config struct {
 	printers.SearchParameters
-	energy     uint // 0-6
-	printDelay time.Duration
-	imageFile  string
-	text       string
-	pattern    string // test pattern to print
-	crop       bool   // crop image to printer width instead of resizing
-	dither     string // dithering algorithm to use
-	verbose    bool
+	energy         uint // 0-6
+	printDelay     time.Duration
+	imageFile      string
+	text           string
+	pattern        string  // test pattern to print
+	crop           bool    // crop image to printer width instead of resizing
+	dither         string  // dithering algorithm to use
+	ttf            bool    // use true type font for text printing
+	ttfFontSize    float64 // font size for TTF text printing, default is 8pt
+	ttfLineSpacing float64 // line spacing for TTF text printing, default is 1.0
+	verbose        bool
 }
 
 var cliflags config
@@ -47,6 +50,9 @@ func init() {
 	flag.StringVar(&cliflags.pattern, "pattern", "", "Test pattern to print (e.g. 'LastLineTest')")
 	flag.BoolVar(&cliflags.crop, "crop", false, "Crop image to printer width instead of resizing")
 	flag.StringVar(&cliflags.dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", printers.AllDitherFunctions()))
+	flag.BoolVar(&cliflags.ttf, "ttf", false, "Use TrueType font for text printing (requires -t option)")
+	flag.Float64Var(&cliflags.ttfFontSize, "ttf-size", 8.0, "Font size for TrueType text printing in points (default is 8pt)")
+	flag.Float64Var(&cliflags.ttfLineSpacing, "ttf-spacing", 1.0, "Line spacing for TrueType text printing (default is 1.0)")
 }
 
 func init() {
@@ -70,6 +76,9 @@ func main() {
 	if cliflags.imageFile == "" && cliflags.text == "" && cliflags.pattern == "" {
 		flag.Usage()
 		log.Fatal("You must specify either an image file with -i or text to print with -t")
+	}
+	if cliflags.text == "" && cliflags.ttf {
+		slog.Warn("TrueType font option -ttf is set, but no text provided. It will be ignored.")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -100,7 +109,11 @@ func run(ctx context.Context, cfg config) error {
 			}
 			cfg.text = buf.String()
 		}
-		return prn.PrintText(ctx, cfg.text)
+		if cfg.ttf {
+			return prn.PrintTextTTF(ctx, cfg.text, cfg.ttfFontSize, cfg.ttfLineSpacing)
+		} else {
+			return prn.PrintText(ctx, cfg.text)
+		}
 	} else if cfg.imageFile != "" {
 		f, err := os.Open(cfg.imageFile)
 		if err != nil {
