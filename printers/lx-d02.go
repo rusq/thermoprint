@@ -3,6 +3,7 @@ package printers
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"image"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/rusq/fontpic"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/inconsolata"
 	"golang.org/x/image/math/fixed"
 	"tinygo.org/x/bluetooth"
 )
@@ -78,6 +78,7 @@ type lxd02options struct {
 	printInterval time.Duration // Interval between sending data packets
 	crop          bool          // crop instead of scaling
 	dithername    string        // Name of the dither function to use
+	dryrun        bool          // If true, don't actually send data to the printer, output raster images
 }
 
 type Option func(*lxd02options)
@@ -116,15 +117,17 @@ func WithDither(name string) Option {
 	}
 }
 
-func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, opt ...Option) (*LXD02, error) {
-	foundDevice, err := LocateDevice(ctx, adapter, sp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to locate device: %w", err)
+func WithDryRun(dryrun bool) Option {
+	return func(o *lxd02options) {
+		o.dryrun = dryrun
 	}
+}
 
-	device, err := adapter.Connect(foundDevice.Address, bluetooth.ConnectionParams{})
+
+func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, opt ...Option) (*LXD02, error) {
+	device, err := connectWithRetries(ctx, adapter, sp, 5)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to device: %w", err)
+		return nil, err
 	}
 	txrx, err := locateCharacteristics(device, txChar, rxChar)
 	if err != nil {
@@ -323,8 +326,15 @@ func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 	}
 }
 
+//go:embed fonts/toshiba.bin
+var toshfont []byte
+
 func (p *LXD02) PrintText(ctx context.Context, text string) error {
-	c := fontpic.NewCanvas(fontpic.Font8x16).
+	face, err := fontpic.ToFnt8(toshfont)
+	if err != nil {
+		return fmt.Errorf("failed to load font: %w", err)
+	}
+	c := fontpic.NewCanvas(face).
 		WithBackground(image.White).
 		WithForeground(image.Black).
 		RenderText([]byte(text))
@@ -339,7 +349,10 @@ func (p *LXD02) PrintText(ctx context.Context, text string) error {
 			img = cropped
 		}
 	}
-	debugSaveImage(img, "debug_text_image.png") // Save debug image
+	if p.options.dryrun {
+		debugSaveImage(img, "debug_text_image.png") // Save debug image
+		return nil
+	}
 	return p.PrintImage(ctx, img)
 }
 
@@ -350,7 +363,7 @@ func (p *LXD02) renderTTF(text string, fontSize, spacing float64) (image.Image, 
 	if spacing == 0.0 {
 		spacing = 1.0 // Default line spacing if not specified
 	}
-	face := inconsolata.Regular8x16
+	face := fontpic.Face8x8
 	defer face.Close()
 	// determine line height to calculate image height
 
@@ -359,7 +372,7 @@ func (p *LXD02) renderTTF(text string, fontSize, spacing float64) (image.Image, 
 	// lineHeight := face.Metrics().Ascent.Ceil() + face.Metrics().Height.Ceil()
 
 	fg, bg := image.Black, image.White
-	img := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), imgHeight)) // 384x48 for LXD02
+	img := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), imgHeight))
 	draw.Draw(img, img.Bounds(), bg, image.Point{}, draw.Src)
 
 	var d = font.Drawer{
@@ -371,8 +384,8 @@ func (p *LXD02) renderTTF(text string, fontSize, spacing float64) (image.Image, 
 	var replacer = strings.NewReplacer("\t", "        ")
 	for _, line := range lines {
 		d.DrawString(replacer.Replace(line))
-		d.Dot.X = fixed.I(0)             // Reset X position to the start of the line
-		d.Dot.Y += face.Metrics().Height // + face.Metrics().Ascent
+		d.Dot.X = fixed.I(0) // Reset X position to the start of the line
+		d.Dot.Y += face.Metrics().Height
 	}
 	return img, nil
 }
@@ -385,9 +398,11 @@ func (p *LXD02) PrintTextTTF(ctx context.Context, text string, fontSize, lineSpa
 	}
 
 	// p.rasteriser.SetDitherFunc(DitherThresholdFn(DefaultThreshold))
-	debugSaveImage(img, "debug_text_image.png") //
+	if p.options.dryrun {
+		debugSaveImage(img, "debug_text_image.png") //
+		return nil
+	}
 	return p.PrintImage(ctx, img)
-	// return nil
 }
 
 func debugSaveImage(img image.Image, filename string) {

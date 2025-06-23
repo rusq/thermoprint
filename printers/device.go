@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -13,7 +14,34 @@ type SearchParameters struct {
 	MACAddress string
 }
 
-func LocateDevice(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters) (bluetooth.ScanResult, error) {
+func connectWithRetries(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, maxRetries int) (bluetooth.Device, error) {
+	var device bluetooth.Device
+	var lastErr error
+	retries := 0
+	for retries < maxRetries {
+		foundDevice, err := locateDevice(ctx, adapter, sp)
+		if err != nil {
+			return bluetooth.Device{}, fmt.Errorf("failed to locate device: %w", err)
+		}
+
+		dev, err := adapter.Connect(foundDevice.Address, bluetooth.ConnectionParams{})
+		lastErr = err
+		if err == nil {
+			device = dev
+			break
+		}
+		retries++
+		lastErr = err
+		slog.Warn("Failed to connect to device, retrying", "attempt", retries, "error", err)
+		time.Sleep(5 * time.Second) // Wait before retrying
+	}
+	if lastErr != nil {
+		return bluetooth.Device{}, fmt.Errorf("failed to connect to device: %w", lastErr)
+	}
+	return device, nil
+}
+
+func locateDevice(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters) (bluetooth.ScanResult, error) {
 	var d bluetooth.ScanResult
 	if sp.MACAddress == "" && sp.Name == "" {
 		return d, fmt.Errorf("cannot specify both MAC address and device name")
