@@ -9,6 +9,8 @@ import (
 	"tinygo.org/x/bluetooth"
 )
 
+const retryWaitTime = 1 * time.Second
+
 type SearchParameters struct {
 	Name       string
 	MACAddress string
@@ -33,7 +35,7 @@ func connectWithRetries(ctx context.Context, adapter *bluetooth.Adapter, sp Sear
 		retries++
 		lastErr = err
 		slog.Warn("Failed to connect to device, retrying", "attempt", retries, "error", err)
-		time.Sleep(5 * time.Second) // Wait before retrying
+		time.Sleep(retryWaitTime) // Wait before retrying
 	}
 	if lastErr != nil {
 		return bluetooth.Device{}, fmt.Errorf("failed to connect to device: %w", lastErr)
@@ -42,24 +44,24 @@ func connectWithRetries(ctx context.Context, adapter *bluetooth.Adapter, sp Sear
 }
 
 func locateDevice(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters) (bluetooth.ScanResult, error) {
-	var d bluetooth.ScanResult
 	if sp.MACAddress == "" && sp.Name == "" {
-		return d, fmt.Errorf("cannot specify both MAC address and device name")
+		return bluetooth.ScanResult{}, fmt.Errorf("cannot specify both MAC address and device name")
 	}
+	var d bluetooth.ScanResult
 	err := adapter.Scan(func(a *bluetooth.Adapter, sr bluetooth.ScanResult) {
 		if sr.LocalName() == sp.Name || sr.Address.String() == sp.MACAddress {
 			slog.Info("Found printer", "name", sr.LocalName(), "address", sr.Address)
+			d = sr
 			if err := a.StopScan(); err != nil {
 				slog.ErrorContext(ctx, "Failed to stop scanning", "error", err)
 			}
-			d = sr
 			return
 		}
 	})
 	if err != nil {
 		return d, fmt.Errorf("failed to start scanning: %w", err)
 	}
-	slog.DebugContext(ctx, "Scanning complete")
+	slog.DebugContext(ctx, "Scanning complete", "device", d.Address, "name", d.LocalName())
 	return d, nil
 }
 

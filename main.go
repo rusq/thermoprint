@@ -35,6 +35,7 @@ type config struct {
 	ttfFontSize    float64 // font size for TTF text printing, default is 8pt TODO
 	ttfLineSpacing float64 // line spacing for TTF text printing, default is 1.0 TODO
 	dry            bool    // dry run, do not send commands to printer
+	gamma          float64 // gamma correction for dithering, default is 0.0
 	verbose        bool
 }
 
@@ -51,8 +52,9 @@ func init() {
 	flag.StringVar(&cliflags.pattern, "pattern", "", "Test pattern to print (e.g. 'LastLineTest')")
 	flag.BoolVar(&cliflags.crop, "crop", false, "Crop image to printer width instead of resizing")
 	flag.StringVar(&cliflags.dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", printers.AllDitherFunctions()))
-	flag.BoolVar(&cliflags.ttf, "ttf", false, "Use TrueType font for text printing (requires -t option)")
+	// flag.BoolVar(&cliflags.ttf, "ttf", false, "Use TrueType font for text printing (requires -t option)")
 	flag.BoolVar(&cliflags.dry, "dry", false, "Dry run, do not send commands to printer")
+	flag.Float64Var(&cliflags.gamma, "gamma", printers.DefaultGamma, "Gamma correction for dithering")
 }
 
 func init() {
@@ -96,6 +98,7 @@ func run(ctx context.Context, cfg config) error {
 		printers.WithCrop(cfg.crop),
 		printers.WithDither(cfg.dither),
 		printers.WithDryRun(cfg.dry),
+		printers.WithGamma(cfg.gamma),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create printer: %w", err)

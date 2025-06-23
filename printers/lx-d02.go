@@ -1,3 +1,5 @@
+// Package printers implements printing on a LX-D02 (Dolebo) bluetooth thermal
+// printer.
 package printers
 
 import (
@@ -39,6 +41,8 @@ const (
 	responseTimeout = 3 * time.Second        // Timeout for sending data and waiting for response
 )
 
+// LXD02 represents a LX-D02 printer.  Instance is not safe for concurrent use.
+// Zero value is unusable, initialise with [NewLXD02]
 type LXD02 struct {
 	dev        bluetooth.Device
 	tx         bluetooth.DeviceCharacteristic
@@ -79,6 +83,7 @@ type lxd02options struct {
 	crop          bool          // crop instead of scaling
 	dithername    string        // Name of the dither function to use
 	dryrun        bool          // If true, don't actually send data to the printer, output raster images
+	gamma         float64       // gamma
 }
 
 type Option func(*lxd02options)
@@ -98,6 +103,17 @@ func WithPrintInterval(d time.Duration) Option {
 	}
 	return func(o *lxd02options) {
 		o.printInterval = d
+	}
+}
+
+// WithGamma allows to specify rasteriser gamma correction value.
+// [DefaultGamma] value or 0.0 means use default for the selected dither
+// function.
+func WithGamma(gamma float64) Option {
+	return func(l *lxd02options) {
+		if gamma > 0.0 {
+			l.gamma = gamma
+		}
 	}
 }
 
@@ -122,7 +138,6 @@ func WithDryRun(dryrun bool) Option {
 		o.dryrun = dryrun
 	}
 }
-
 
 func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, opt ...Option) (*LXD02, error) {
 	device, err := connectWithRetries(ctx, adapter, sp, 5)
@@ -278,6 +293,13 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 					continue
 				}
 				slog.InfoContext(ctx, "status", "status", st)
+				if st.BatteryLevel < 10.0 {
+					slog.WarnContext(ctx, "battery level critical")
+				}
+				if st.NoPaper {
+					slog.ErrorContext(ctx, "no paper")
+					p.eventCh <- fsmEvent{kind: eventError}
+				}
 			case ntHold:
 				p.eventCh <- fsmEvent{kind: eventNotificationHold}
 			case ntRetransmit:
@@ -307,11 +329,32 @@ func (p *LXD02) loadBuffer(data [][]byte) {
 	copy(p.buffer, data)
 }
 
+// dry run file names
+const (
+	drRasteriseFile = "preview_rasterised.png"
+	drTextFile      = "preview_text_image.png"
+	drPatternFile   = "preview_pattern_image.png"
+)
+
+// PrintImage prints an image on the printer.  If dry run is enabled, it saves
+// the preview file to disk and exits.
 func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 	p.doneCh = make(chan struct{})
 	p.eventCh = make(chan fsmEvent, 10)
 
-	p.loadBuffer(p.rasteriser.Rasterise(img))
+	bmp := p.rasteriser.ResizeAndDither(img, p.options.gamma)
+	if p.options.dryrun {
+		// DRY RUN terminates here.
+		debugSaveImage(bmp, drRasteriseFile)
+		return nil
+	}
+
+	packets, err := p.rasteriser.Serialise(bmp)
+	if err != nil {
+		return err
+	}
+	p.loadBuffer(packets)
+
 	go p.runFSM(ctx)
 
 	p.eventCh <- fsmEvent{kind: eventStart}
@@ -350,8 +393,7 @@ func (p *LXD02) PrintText(ctx context.Context, text string) error {
 		}
 	}
 	if p.options.dryrun {
-		debugSaveImage(img, "debug_text_image.png") // Save debug image
-		return nil
+		debugSaveImage(img, drTextFile) // Save debug image
 	}
 	return p.PrintImage(ctx, img)
 }
@@ -399,8 +441,7 @@ func (p *LXD02) PrintTextTTF(ctx context.Context, text string, fontSize, lineSpa
 
 	// p.rasteriser.SetDitherFunc(DitherThresholdFn(DefaultThreshold))
 	if p.options.dryrun {
-		debugSaveImage(img, "debug_text_image.png") //
-		return nil
+		debugSaveImage(img, drTextFile) //
 	}
 	return p.PrintImage(ctx, img)
 }
@@ -549,7 +590,9 @@ func (p *LXD02) PrintPattern(ctx context.Context, pattern string) error {
 	if img == nil {
 		return fmt.Errorf("test pattern %s returned nil image", pattern)
 	}
-	debugSaveImage(img, "debug_pattern_image.png") // Save debug image
 
+	if p.options.dryrun {
+		debugSaveImage(img, drPatternFile) // Save debug image
+	}
 	return p.PrintImage(ctx, img)
 }
