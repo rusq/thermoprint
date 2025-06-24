@@ -1,0 +1,16 @@
+name,dimx,dimy,file
+fujitsu-8,8,8,FujitsuSiemensX300M_8x8.bin
+fujitsu-16,8,16,FujitsuSiemensX300M_8x16.bin
+IBM-8,8,8,IBM_VGA_8x8.bin
+IBM-14,8,14,IBM_VGA_8x14.bin
+IBM-16,8,16,IBM_VGA_8x16.bin
+morse,8,16,MORSEKP800_8x16.bin
+phoenix,8,8,phoenix-2__8x8.bin
+toshiba-8,8,8,toshiba_t5200c_bios_vers_3__1__8x8.bin
+toshiba-8-bold,8,8,toshiba_t5200c_bios_vers_3__8x8.bin
+toshiba,8,16,toshiba.bin
+toshiba-bold,8,16,toshiba_bold.bin
+trident-8,8,8,tvga8800cs_2__8x8.bin
+trident-14,8,14,tvga8800cs_2__8x8.bin
+trident-16,8,16,tvga8800cs_2__8x8.bin
+laser-turbo,8,8,VTech-LaserTurboXT-BIOS-V1__8x8.bin

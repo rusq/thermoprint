@@ -6,7 +6,7 @@ require (
 	github.com/disintegration/imaging v1.6.2
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
 	github.com/makeworld-the-better-one/dither/v2 v2.4.0
-	github.com/rusq/fontpic v0.0.4
+	github.com/rusq/fontpic v0.0.5
 	golang.org/x/image v0.28.0
 	tinygo.org/x/bluetooth v0.12.0
 )
@@ -22,4 +22,5 @@ require (
 	github.com/tinygo-org/pio v0.2.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/sys v0.33.0 // indirect
+	golang.org/x/text v0.26.0 // indirect
 )

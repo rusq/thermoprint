@@ -87,8 +87,9 @@ func makeCheckers(t *testing.T, width, height int) image.Image {
 
 func TestRaster_Rasterise(t *testing.T) {
 	type args struct {
-		src   image.Image
-		gamma float64
+		src        image.Image
+		gamma      float64
+		autoDither bool
 	}
 	tests := []struct {
 		name    string
@@ -122,7 +123,7 @@ func TestRaster_Rasterise(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &tt.fields
-			got, err := r.Serialise(r.ResizeAndDither(tt.args.src, DefaultGamma))
+			got, err := r.Serialise(r.ResizeAndDither(tt.args.src, DefaultGamma, tt.args.autoDither))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Raster.Rasterise() error = %v, wantErr %v", err, tt.wantErr)
 				return

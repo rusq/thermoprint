@@ -9,18 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/draw"
 	"image/png"
 	"log/slog"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/rusq/fontpic"
 	"golang.org/x/image/font"
-	"golang.org/x/image/math/fixed"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -84,6 +80,7 @@ type lxd02options struct {
 	dithername    string        // Name of the dither function to use
 	dryrun        bool          // If true, don't actually send data to the printer, output raster images
 	gamma         float64       // gamma
+	autoDither    bool
 }
 
 type Option func(*lxd02options)
@@ -139,16 +136,13 @@ func WithDryRun(dryrun bool) Option {
 	}
 }
 
-func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, opt ...Option) (*LXD02, error) {
-	device, err := connectWithRetries(ctx, adapter, sp, 5)
-	if err != nil {
-		return nil, err
+func WithAutoDither(isEnabled bool) Option {
+	return func(o *lxd02options) {
+		o.autoDither = isEnabled
 	}
-	txrx, err := locateCharacteristics(device, txChar, rxChar)
-	if err != nil {
-		return nil, fmt.Errorf("failed to locate services: %w", err)
-	}
+}
 
+func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, opt ...Option) (*LXD02, error) {
 	var opts = lxd02options{
 		energy:        2, // Default energy level
 		printInterval: DefaultPrintDelay,
@@ -157,12 +151,32 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 		o(&opts)
 	}
 	prn := &LXD02{
-		dev:        device,
-		tx:         txrx.tx,
-		rx:         txrx.rx,
 		options:    opts,
 		rasteriser: LXD02Rasteriser, // Default rasteriser for LXD02
 	}
+	if !opts.dryrun {
+		device, err := connectWithRetries(ctx, adapter, sp, 5)
+		if err != nil {
+			return nil, err
+		}
+		prn.dev = device
+
+		txrx, err := locateCharacteristics(device, txChar, rxChar)
+		if err != nil {
+			return nil, fmt.Errorf("failed to locate services: %w", err)
+		}
+		prn.tx = txrx.tx
+		prn.rx = txrx.rx
+		slog.Info("Connected to printer", "address", device.Address, "mac", device.Address)
+
+		notifyCh := make(chan lxd02notification, 10)
+		if err := prn.rx.EnableNotifications(prn.notificationCallback(notifyCh)); err != nil {
+			return nil, fmt.Errorf("failed to enable notifications on TX characteristic: %w", err)
+		}
+		slog.Debug("enabled notifications, starting worker")
+		go prn.worker(ctx, notifyCh)
+	}
+
 	if opts.dithername != "" {
 		ditherFunc, ok := ditherFunctions[opts.dithername]
 		if !ok {
@@ -172,14 +186,6 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 		slog.Debug("Using dither function", "name", opts.dithername)
 	}
 
-	notifyCh := make(chan lxd02notification, 10)
-	if err := prn.rx.EnableNotifications(prn.notificationCallback(notifyCh)); err != nil {
-		return nil, fmt.Errorf("failed to enable notifications on TX characteristic: %w", err)
-	}
-	slog.Debug("enabled notifications, starting worker")
-	go prn.worker(ctx, notifyCh)
-
-	slog.Info("Connected to printer", "address", device.Address, "mac", device.Address)
 	return prn, nil
 }
 
@@ -314,6 +320,9 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 }
 
 func (p *LXD02) Disconnect() error {
+	if p.options.dryrun {
+		return nil
+	}
 	if err := p.rx.EnableNotifications(func([]byte) {}); err != nil { // noop callback
 		slog.Warn("failed to disable notifications, never mind, let's continue", "error", err)
 	}
@@ -342,7 +351,7 @@ func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 	p.doneCh = make(chan struct{})
 	p.eventCh = make(chan fsmEvent, 10)
 
-	bmp := p.rasteriser.ResizeAndDither(img, p.options.gamma)
+	bmp := p.rasteriser.ResizeAndDither(img, p.options.gamma, p.options.autoDither)
 	if p.options.dryrun {
 		// DRY RUN terminates here.
 		debugSaveImage(bmp, drRasteriseFile)
@@ -369,77 +378,13 @@ func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 	}
 }
 
-//go:embed fonts/toshiba.bin
-var toshfont []byte
-
-func (p *LXD02) PrintText(ctx context.Context, text string) error {
-	face, err := fontpic.ToFnt8(toshfont)
-	if err != nil {
-		return fmt.Errorf("failed to load font: %w", err)
-	}
-	c := fontpic.NewCanvas(face).
-		WithBackground(image.White).
-		WithForeground(image.Black).
-		RenderText([]byte(text))
-	img := c.Image()
-	// If the image is larger than the printer's width, crop it
-	if img.Bounds().Dx() > p.rasteriser.LineWidth() {
-		if p.options.crop {
-			slog.Debug("Cropping image to fit printer width", "width", p.rasteriser.LineWidth(), "original_width", img.Bounds().Dx())
-			// Crop the image to fit the printer's width
-			cropped := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), img.Bounds().Dy()))
-			draw.Draw(cropped, cropped.Bounds(), img, image.Point{}, draw.Src)
-			img = cropped
-		}
-	}
-	if p.options.dryrun {
-		debugSaveImage(img, drTextFile) // Save debug image
-	}
-	return p.PrintImage(ctx, img)
-}
-
-func (p *LXD02) renderTTF(text string, fontSize, spacing float64) (image.Image, error) {
-	if fontSize <= 0.0 {
-		fontSize = 8.0 // Default font size if not specified
-	}
-	if spacing == 0.0 {
-		spacing = 1.0 // Default line spacing if not specified
-	}
-	face := fontpic.Face8x8
-	defer face.Close()
-	// determine line height to calculate image height
-
-	lines := strings.Split(text, "\n")
-	imgHeight := len(lines) * face.Metrics().Height.Ceil()
-	// lineHeight := face.Metrics().Ascent.Ceil() + face.Metrics().Height.Ceil()
-
-	fg, bg := image.Black, image.White
-	img := image.NewRGBA(image.Rect(0, 0, p.rasteriser.LineWidth(), imgHeight))
-	draw.Draw(img, img.Bounds(), bg, image.Point{}, draw.Src)
-
-	var d = font.Drawer{
-		Dst:  img,
-		Src:  fg,
-		Face: face,
-		Dot:  fixed.P(0, face.Metrics().Ascent.Ceil()), // Start at the top
-	}
-	var replacer = strings.NewReplacer("\t", "        ")
-	for _, line := range lines {
-		d.DrawString(replacer.Replace(line))
-		d.Dot.X = fixed.I(0) // Reset X position to the start of the line
-		d.Dot.Y += face.Metrics().Height
-	}
-	return img, nil
-}
-
-func (p *LXD02) PrintTextTTF(ctx context.Context, text string, fontSize, lineSpacing float64) error {
+func (p *LXD02) PrintTextTTF(ctx context.Context, text string, face font.Face) error {
 	// rasterizeText
-	img, err := p.renderTTF(text, fontSize, lineSpacing)
+	img, err := renderTTF(text, face, p.rasteriser.LineWidth())
 	if err != nil {
 		return fmt.Errorf("failed to render TTF text: %w", err)
 	}
 
-	// p.rasteriser.SetDitherFunc(DitherThresholdFn(DefaultThreshold))
 	if p.options.dryrun {
 		debugSaveImage(img, drTextFile) //
 	}

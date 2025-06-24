@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"log/slog"
 	"math"
 
 	"golang.org/x/image/draw"
@@ -22,7 +23,7 @@ type Raster struct {
 }
 
 type Rasteriser interface {
-	ResizeAndDither(img image.Image, gamma float64) image.Image
+	ResizeAndDither(img image.Image, gamma float64, autoDither bool) image.Image
 	// Serialise should return a slice of byte slices that are sent to printer.
 	Serialise(src image.Image) ([][]byte, error)
 	// DPI should return the DPI of the rasteriser.
@@ -69,18 +70,19 @@ func (r *Raster) SetDitherFunc(fn DitherFunc) {
 	}
 }
 
-func (r *Raster) ResizeAndDither(src image.Image, gamma float64) image.Image {
+func (r *Raster) ResizeAndDither(src image.Image, gamma float64, autoDither bool) image.Image {
 	dfn := ditherimg
 	if r.DitherFunc != nil {
 		dfn = r.DitherFunc
 	}
 
 	resized := resize(src, r.Width)
-	if !isDocument(resized, 50, 200) {
+	slog.Info("x", "autodither", autoDither)
+	if autoDither && isDocument(resized, 50, 200) {
 		// If the image is not a document, apply dithering
-		return dfn(resized, gamma)
+		return resized
 	}
-	return resized
+	return dfn(resized, gamma)
 }
 
 func (r *Raster) Serialise(img image.Image) ([][]byte, error) {

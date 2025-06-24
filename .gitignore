@@ -6,3 +6,4 @@ __debug*
 *.bin
 .DS_Store
 /*.txt
+*.ttf
