@@ -40,7 +40,7 @@ type config struct {
 	dry         bool    // dry run, do not send commands to printer
 	gamma       float64 // gamma correction for dithering, default is 0.0
 	verbose     bool
-	autoDither  bool
+	autoDither  bool // autoDither will automatically apply dithering to photographs, but not on documents
 }
 
 var cliflags config
