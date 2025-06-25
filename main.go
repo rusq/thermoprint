@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/image/font"
 	"tinygo.org/x/bluetooth"
 
 	"github.com/rusq/thermoprint/printers"
@@ -24,35 +25,54 @@ var adapter = bluetooth.DefaultAdapter
 
 type config struct {
 	printers.SearchParameters
-	energy         uint // 0-6
-	printDelay     time.Duration
-	imageFile      string
-	text           string
-	pattern        string  // test pattern to print
-	crop           bool    // crop image to printer width instead of resizing
-	dither         string  // dithering algorithm to use
-	ttf            bool    // use true type font for text printing
-	ttfFontSize    float64 // font size for TTF text printing, default is 8pt
-	ttfLineSpacing float64 // line spacing for TTF text printing, default is 1.0
-	verbose        bool
+	energy      uint // 0-6
+	printDelay  time.Duration
+	imageFile   string
+	text        string
+	pattern     string  // test pattern to print
+	crop        bool    // crop image to printer width instead of resizing
+	dither      string  // dithering algorithm to use
+	fontFile    string  // if defined, loads external font
+	fontName    string  // select built in font
+	listFonts   bool    // lists built-in fonts
+	ttfFontSize float64 // font size for TTF text printing, default is 8pt, ignored for bitmap fonts
+	ttfDPI      float64 // default dpi for TTF rasterisation
+	dry         bool    // dry run, do not send commands to printer
+	gamma       float64 // gamma correction for dithering, default is 0.0
+	verbose     bool
+	autoDither  bool // autoDither will automatically apply dithering to photographs, but not on documents
 }
 
 var cliflags config
 
 func init() {
+	// application flags
+	flag.BoolVar(&cliflags.verbose, "v", os.Getenv("DEBUG") == "1", "Enable verbose logging")
+	flag.BoolVar(&cliflags.dry, "dry", false, "Dry run, do not send commands to printer")
+
+	// printer
 	flag.StringVar(&cliflags.Name, "p", "LX-D02", "Printer name to use")
 	flag.StringVar(&cliflags.MACAddress, "mac", "", "MAC address of the printer")
-	flag.BoolVar(&cliflags.verbose, "v", os.Getenv("DEBUG") == "1", "Enable verbose logging")
 	flag.UintVar(&cliflags.energy, "e", 2, "Thermal energy `level` (0-6), higher is darker printout")
 	flag.DurationVar(&cliflags.printDelay, "d", printers.DefaultPrintDelay, "Delay between print commands")
-	flag.StringVar(&cliflags.imageFile, "i", "", "Image file to print (PNG or JPEG)")
-	flag.StringVar(&cliflags.text, "t", "", "Text to print (overrides image file)")
+
+	// pattern
 	flag.StringVar(&cliflags.pattern, "pattern", "", "Test pattern to print (e.g. 'LastLineTest')")
-	flag.BoolVar(&cliflags.crop, "crop", false, "Crop image to printer width instead of resizing")
+
+	// image
+	flag.StringVar(&cliflags.imageFile, "i", "", "Image file to print (PNG or JPEG)")
 	flag.StringVar(&cliflags.dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", printers.AllDitherFunctions()))
-	flag.BoolVar(&cliflags.ttf, "ttf", false, "Use TrueType font for text printing (requires -t option)")
-	flag.Float64Var(&cliflags.ttfFontSize, "ttf-size", 8.0, "Font size for TrueType text printing in points (default is 8pt)")
-	flag.Float64Var(&cliflags.ttfLineSpacing, "ttf-spacing", 1.0, "Line spacing for TrueType text printing (default is 1.0)")
+	flag.Float64Var(&cliflags.gamma, "gamma", printers.DefaultGamma, "Gamma correction for dithering")
+
+	// text
+	flag.StringVar(&cliflags.text, "t", "", "Text to print (overrides image file)")
+	flag.BoolVar(&cliflags.crop, "crop", false, "Crop image to printer width instead of resizing")
+	flag.StringVar(&cliflags.fontFile, "font-file", "", "font `filename` (overrides -font)")
+	flag.StringVar(&cliflags.fontName, "font", "toshiba", "select a built-in font `name`")
+	flag.BoolVar(&cliflags.listFonts, "list-fonts", false, "lists built-in fonts")
+	flag.Float64Var(&cliflags.ttfFontSize, "font-size", 5.0, "font size in `pt` for true-type fonts")
+	flag.Float64Var(&cliflags.ttfDPI, "dpi", float64(printers.LXD02Rasteriser.Dpi), "DPI for TrueType fonts")
+	flag.BoolVar(&cliflags.autoDither, "auto-dither", false, "automatically disables dithering if a document is detected")
 }
 
 func init() {
@@ -72,13 +92,16 @@ func main() {
 	if cliflags.verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	if cliflags.listFonts {
+		if err := listFonts(os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	if cliflags.imageFile == "" && cliflags.text == "" && cliflags.pattern == "" {
 		flag.Usage()
-		log.Fatal("You must specify either an image file with -i or text to print with -t")
-	}
-	if cliflags.text == "" && cliflags.ttf {
-		slog.Warn("TrueType font option -ttf is set, but no text provided. It will be ignored.")
+		log.Fatal("one of -i, -t, -p or -list-fonts is expected")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -95,12 +118,29 @@ func run(ctx context.Context, cfg config) error {
 		printers.WithPrintInterval(cfg.printDelay),
 		printers.WithCrop(cfg.crop),
 		printers.WithDither(cfg.dither),
+		printers.WithDryRun(cfg.dry),
+		printers.WithGamma(cfg.gamma),
+		printers.WithAutoDither(cfg.autoDither),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create printer: %w", err)
 	}
 	defer prn.Disconnect()
 	if cfg.text != "" {
+		var face font.Face
+		if cfg.fontFile != "" {
+			fc, err := loadFontfile(cfg.fontFile, cfg.ttfFontSize, cfg.ttfDPI)
+			if err != nil {
+				return err
+			}
+			face = fc
+		} else {
+			fc, err := loadFntByName(cfg.fontName)
+			if err != nil {
+				return err
+			}
+			face = fc
+		}
 		if cfg.text == "-" {
 			// Read text from stdin if "-" is specified
 			var buf bytes.Buffer
@@ -109,11 +149,7 @@ func run(ctx context.Context, cfg config) error {
 			}
 			cfg.text = buf.String()
 		}
-		if cfg.ttf {
-			return prn.PrintTextTTF(ctx, cfg.text, cfg.ttfFontSize, cfg.ttfLineSpacing)
-		} else {
-			return prn.PrintText(ctx, cfg.text)
-		}
+		return prn.PrintTextTTF(ctx, cfg.text, face)
 	} else if cfg.imageFile != "" {
 		f, err := os.Open(cfg.imageFile)
 		if err != nil {

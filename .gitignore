@@ -5,3 +5,5 @@ __debug*
 *.png
 *.bin
 .DS_Store
+/*.txt
+*.ttf

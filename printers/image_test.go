@@ -10,6 +10,10 @@ import (
 	"testing"
 )
 
+func resizeAndDither(img image.Image, targetWidth int, ditherFn DitherFunc) image.Image {
+	return ditherFn(resize(img, targetWidth), DefaultGamma)
+}
+
 func openImage(t *testing.T, filename string) image.Image {
 	t.Helper()
 	file, err := os.Open(filename)
@@ -42,7 +46,7 @@ func Test_resizeAndDither(t *testing.T) {
 	type args struct {
 		// img         image.Image
 		targetWidth int
-		ditherFn    func(image.Image) image.Image
+		ditherFn    DitherFunc
 	}
 	tests := []struct {
 		name   string
@@ -83,13 +87,16 @@ func makeCheckers(t *testing.T, width, height int) image.Image {
 
 func TestRaster_Rasterise(t *testing.T) {
 	type args struct {
-		src image.Image
+		src        image.Image
+		gamma      float64
+		autoDither bool
 	}
 	tests := []struct {
-		name   string
-		fields Raster
-		args   args
-		want   [][]byte
+		name    string
+		fields  Raster
+		args    args
+		want    [][]byte
+		wantErr bool
 	}{
 		{
 			name:   "Rasterise image",
@@ -101,6 +108,7 @@ func TestRaster_Rasterise(t *testing.T) {
 				append(append(append([]byte{0x55, 0x00, 0x00}, bytes.Repeat([]byte{0b01010101}, 48)...), bytes.Repeat([]byte{0b10101010}, 48)...), 0x00),
 				append(append(append([]byte{0x55, 0x00, 0x01}, bytes.Repeat([]byte{0b01010101}, 48)...), bytes.Repeat([]byte{0b10101010}, 48)...), 0x00),
 			},
+			wantErr: false,
 		},
 		{
 			name:   "rasterise text",
@@ -108,13 +116,18 @@ func TestRaster_Rasterise(t *testing.T) {
 			args: args{
 				src: openImage(t, "../media/rasterised.png"), // Use a sample image
 			},
-			want: [][]byte{},
+			want:    [][]byte{},
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &tt.fields
-			got := r.Rasterise(tt.args.src)
+			got, err := r.Serialise(r.ResizeAndDither(tt.args.src, DefaultGamma, tt.args.autoDither))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Raster.Rasterise() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Raster.Rasterise() = [% x], want [% x]", got, tt.want)
 				if err := os.WriteFile("test_rasterised.bin", bytes.Join(got, []byte{'\n'}), 0644); err != nil {

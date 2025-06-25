@@ -41,7 +41,7 @@ func LastLineTest(maxX int) image.Image {
 	return img
 }
 
-// Draws a running pattern of millimeter lines.
+// MillimeterLines draws a running pattern of millimeter lines.
 // Each horizontal line is 8 dots wide, and 1 dot high.  Each horizontal line is
 // repeated every 40 dots, so that the first line is at 0, the second at 40, the third at 80,
 // and so on, until the maximum X coordinate is reached.
