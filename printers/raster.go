@@ -26,6 +26,9 @@ type Rasteriser interface {
 	ResizeAndDither(img image.Image, gamma float64, autoDither bool) image.Image
 	// Serialise should return a slice of byte slices that are sent to printer.
 	Serialise(src image.Image) ([][]byte, error)
+	// Enumerate prepares the raw data for printing running the packet func
+	// for each byte slice and returning the data ready to be sent to printer.
+	Enumerate(data [][]byte) ([][]byte, error)
 	// DPI should return the DPI of the rasteriser.
 	DPI() int
 	// LineWidth should return the line width in pixels, i.e. for 203 dpi
@@ -149,6 +152,35 @@ func (r *Raster) Serialise(img image.Image) ([][]byte, error) {
 	}
 
 	return packets, nil
+}
+
+// Enumerate converts the raw data to printer specific packets ready to be sent
+// to printer.
+func (r *Raster) Enumerate(data [][]byte) ([][]byte, error) {
+	var (
+		msgPrefixSz     = len(r.PrefixFunc(0)) // 55 m n
+		msgTerminatorSz = 1                    // 00
+
+		lineWidthPixels = r.Width
+		lineWidthBytes  = lineWidthPixels / 8
+		linesPerMsg     = r.LinesPerPacket
+
+		msgDataSz    = lineWidthBytes * linesPerMsg
+		msgPayloadSz = msgPrefixSz + msgDataSz + msgTerminatorSz // 55 m n + data + 00
+	)
+	var ret = make([][]byte, len(data))
+	for i, line := range data {
+		if len(line) != msgDataSz {
+			return nil, fmt.Errorf("corrupt raw data on line %d", i)
+		}
+		row := make([]byte, 0, msgPayloadSz)
+
+		row = append(row, r.PrefixFunc(i)...)
+		row = append(row, line...)
+		row = append(row, r.Terminator)
+		ret[i] = row
+	}
+	return ret, nil
 }
 
 func pixelBit(img image.Image, x, y int, threshold uint8) bool {

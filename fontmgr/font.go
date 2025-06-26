@@ -1,4 +1,4 @@
-package main
+package fontmgr
 
 import (
 	"embed"
@@ -22,11 +22,11 @@ import (
 //go:embed fonts/*
 var fontFS embed.FS
 
-type builtInFont struct {
-	name     string
-	width    uint8
-	height   uint8
-	filename string
+type BitmapFont struct {
+	Name     string
+	Width    uint8
+	Height   uint8
+	Filename string
 }
 
 var (
@@ -35,20 +35,7 @@ var (
 	errSkip       = errors.New("skip")
 )
 
-func listFonts(w io.Writer) error {
-	if err := loadFontCatalogue(func(fnt builtInFont, err error) error {
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(w, "%20s (%dx%d)\n", fnt.name, fnt.width, fnt.height)
-		return nil
-	}); err != nil {
-		return err
-	}
-	return nil
-}
-
-func loadFontCatalogue(cb func(builtInFont, error) error) error {
+func LoadFontCatalogue(cb func(BitmapFont, error) error) error {
 	f, err := fontFS.Open("fonts/fonts.csv")
 	if err != nil {
 		return fmt.Errorf("unable to find font catalogue: %w", err)
@@ -74,9 +61,9 @@ func loadFontCatalogue(cb func(builtInFont, error) error) error {
 		for i, key := range header {
 			rec[key] = row[i]
 		}
-		fnt := builtInFont{
-			name:     rec["name"],
-			filename: rec["file"],
+		fnt := BitmapFont{
+			Name:     rec["name"],
+			Filename: rec["file"],
 		}
 
 		width, err := atoiv[uint8](rec["dimx"], 0, 255)
@@ -87,7 +74,7 @@ func loadFontCatalogue(cb func(builtInFont, error) error) error {
 				return err2
 			}
 		}
-		fnt.width = uint8(width)
+		fnt.Width = uint8(width)
 
 		height, err := atoiv[uint8](rec["dimy"], 0, 255)
 		if err != nil {
@@ -97,7 +84,7 @@ func loadFontCatalogue(cb func(builtInFont, error) error) error {
 				return err2
 			}
 		}
-		fnt.height = uint8(height)
+		fnt.Height = uint8(height)
 
 		if err := cb(fnt, nil); err != nil {
 			if errors.Is(err, errStop) {
@@ -123,7 +110,7 @@ func atoiv[T ~uint8](s string, lo, hi int) (T, error) {
 
 const defaultFont = "toshiba"
 
-func loadFontfile(filename string, size float64, dpi float64) (font.Face, error) {
+func LoadFromFile(filename string, size float64, dpi float64) (font.Face, error) {
 	if filename == "" {
 		// load default font
 		slog.Debug("filename not specified, loading the default font")
@@ -206,14 +193,14 @@ func loadTTF(filename string, size float64, dpi float64) (font.Face, error) {
 	return face, nil
 }
 
-// loadFntByName loads a built-in font by it's name
-func loadFntByName(name string) (font.Face, error) {
-	var fnt *builtInFont
-	if err := loadFontCatalogue(func(bif builtInFont, err error) error {
+// LoadByName loads a built-in font by it's name
+func LoadByName(name string) (font.Face, error) {
+	var fnt *BitmapFont
+	if err := LoadFontCatalogue(func(bif BitmapFont, err error) error {
 		if err != nil {
 			return err
 		}
-		if bif.name == name {
+		if bif.Name == name {
 			fnt = &bif
 			return errStop
 		}
@@ -225,11 +212,11 @@ func loadFntByName(name string) (font.Face, error) {
 	if fnt == nil {
 		return nil, fmt.Errorf("font %q not found", name)
 	}
-	data, err := fs.ReadFile(fontFS, path.Join("fonts/", fnt.filename))
+	data, err := fs.ReadFile(fontFS, path.Join("fonts/", fnt.Filename))
 	if err != nil {
-		return nil, fmt.Errorf("error reading font file %s: %w", fnt.filename, err)
+		return nil, fmt.Errorf("error reading font file %s: %w", fnt.Filename, err)
 	}
 
-	face := fontpic.FntToFace(data, int(fnt.width), int(fnt.height))
+	face := fontpic.FntToFace(data, int(fnt.Width), int(fnt.Height))
 	return face, nil
 }

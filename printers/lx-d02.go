@@ -12,7 +12,6 @@ import (
 	"image/png"
 	"log/slog"
 	"os"
-	"slices"
 	"sync"
 	"time"
 
@@ -348,9 +347,6 @@ const (
 // PrintImage prints an image on the printer.  If dry run is enabled, it saves
 // the preview file to disk and exits.
 func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
-	p.doneCh = make(chan struct{})
-	p.eventCh = make(chan fsmEvent, 10)
-
 	bmp := p.rasteriser.ResizeAndDither(img, p.options.gamma, p.options.autoDither)
 	if p.options.dryrun {
 		// DRY RUN terminates here.
@@ -362,6 +358,29 @@ func (p *LXD02) PrintImage(ctx context.Context, img image.Image) error {
 	if err != nil {
 		return err
 	}
+
+	return p.printPackets(ctx, packets)
+}
+
+func (p *LXD02) PrintRAW(ctx context.Context, data [][]byte) error {
+	if len(data) == 0 {
+		return errors.New("empty raw data")
+	}
+
+	packets, err := p.rasteriser.Enumerate(data)
+	if err != nil {
+		return err
+	}
+	slog.DebugContext(ctx, "packet stat", "len", len(packets))
+
+	return p.printPackets(ctx, packets)
+}
+
+// printPackets is the low level routine that starts the FSM and sends the
+// encoded image data to the printer.
+func (p *LXD02) printPackets(ctx context.Context, packets [][]byte) error {
+	p.doneCh = make(chan struct{})
+	p.eventCh = make(chan fsmEvent, 10)
 	p.loadBuffer(packets)
 
 	go p.runFSM(ctx)
@@ -521,23 +540,34 @@ func (p *LXD02) Width() int {
 }
 
 func (p *LXD02) PrintPattern(ctx context.Context, pattern string) error {
-	pat, ok := TestPatterns[pattern]
-	if !ok {
-		var names []string
-		for name := range TestPatterns {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		fmt.Fprintf(os.Stderr, "Available test patterns: %v\n", names)
-		return fmt.Errorf("unknown test pattern: %s", pattern)
+	if imgFn, ok := TestImagePatterns[pattern]; ok {
+		return p.printImagePattern(ctx, imgFn)
 	}
-	img := pat(p.rasteriser.LineWidth())
+	if bufPatFn, ok := TestBufferPatterns[pattern]; ok {
+		return p.printBufferPattern(ctx, bufPatFn)
+	}
+	return fmt.Errorf("unknown test pattern: %s", pattern)
+}
+
+func (p *LXD02) printImagePattern(ctx context.Context, imgFn func(int) image.Image) error {
+	img := imgFn(p.rasteriser.LineWidth())
 	if img == nil {
-		return fmt.Errorf("test pattern %s returned nil image", pattern)
+		return errors.New("test image pattern returned nil image")
 	}
 
 	if p.options.dryrun {
 		debugSaveImage(img, drPatternFile) // Save debug image
 	}
 	return p.PrintImage(ctx, img)
+}
+
+func (p *LXD02) printBufferPattern(ctx context.Context, bufPatFn func(int) [][]byte) error {
+	data := bufPatFn(p.rasteriser.LineWidth())
+	if data == nil {
+		return errors.New("test buffer pattern returned no data")
+	}
+	if p.options.dryrun {
+		return errors.New("buffer patterns do not support dry run")
+	}
+	return p.PrintRAW(ctx, data)
 }

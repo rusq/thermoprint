@@ -1,6 +1,7 @@
 package printers
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"math"
@@ -8,13 +9,17 @@ import (
 	"golang.org/x/image/draw"
 )
 
-var TestPatterns = map[string]func(int) image.Image{
-	"LastLineTest":    LastLineTest,
-	"MillimeterLines": MillimeterLines,
-	"Sinusoidal":      SinusoidalPattern,
+var TestImagePatterns = map[string]func(int) image.Image{
+	"RunningLinesImage": TestImgRunningLines,
+	"Millimetres":       TestImgMillimetres,
+	"Sine":              TestImgSine,
 }
 
-// LastLineTest generates 8 lines each of which is 2 pixels high shifted by one pixel to the right,
+var TestBufferPatterns = map[string]func(int) [][]byte{
+	"BinaryPattern": BufferBinaryPattern,
+}
+
+// TestImgRunningLines generates 8 lines each of which is 2 pixels high shifted by one pixel to the right,
 // so that thermal unit is expected to print 4 times.
 //
 // The output looks like this:
@@ -27,7 +32,7 @@ var TestPatterns = map[string]func(int) image.Image{
 //	     | | | |
 //	      | | | |
 //	       | | | |
-func LastLineTest(maxX int) image.Image {
+func TestImgRunningLines(maxX int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, maxX, 16))
 	draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
 	for y := 0; y < 8; y++ {
@@ -41,7 +46,7 @@ func LastLineTest(maxX int) image.Image {
 	return img
 }
 
-// MillimeterLines draws a running pattern of millimeter lines.
+// TestImgMillimetres draws a running pattern of millimeter lines.
 // Each horizontal line is 8 dots wide, and 1 dot high.  Each horizontal line is
 // repeated every 40 dots, so that the first line is at 0, the second at 40, the third at 80,
 // and so on, until the maximum X coordinate is reached.
@@ -56,7 +61,7 @@ func LastLineTest(maxX int) image.Image {
 //		          --      --
 //
 // etc.
-func MillimeterLines(maxX int) image.Image {
+func TestImgMillimetres(maxX int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, maxX, 384/8)) // 48 lines of 8 pixels each
 	draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
 	for y := 0; y < img.Bounds().Dy(); y++ {
@@ -69,7 +74,7 @@ func MillimeterLines(maxX int) image.Image {
 	return img
 }
 
-func SinusoidalPattern(maxX int) image.Image {
+func TestImgSine(maxX int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, maxX, 64)) // 64 lines of 1 pixel each
 	draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
 	for x := 0; x < maxX; x++ {
@@ -79,4 +84,16 @@ func SinusoidalPattern(maxX int) image.Image {
 		}
 	}
 	return img
+}
+
+func BufferBinaryPattern(width int) [][]byte {
+	// width is given in pixels, we need to divide it by 8 and multiply by 2 as
+	// it we are expected to send one []byte slice per 2 lines. So, we divide by 4
+	width /= 4
+	var ret = make([][]byte, 256)
+	for i := 0; i < len(ret); i++ {
+		v := uint8(i)
+		ret[i] = bytes.Repeat([]byte{v}, width)
+	}
+	return ret
 }
