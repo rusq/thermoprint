@@ -9,9 +9,9 @@ import (
 	"os"
 	"slices"
 
+	"github.com/rusq/thermoprint"
 	"github.com/rusq/thermoprint/cmd/tp/internal/bootstrap"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
-	"github.com/rusq/thermoprint/printers"
 )
 
 var CmdPattern = &base.Command{
@@ -49,10 +49,10 @@ func runPattern(ctx context.Context, cmd *base.Command, args []string) error {
 
 func listPatterns(w io.Writer) error {
 	var names []string
-	for name := range printers.TestImagePatterns {
+	for name := range thermoprint.TestImagePatterns {
 		names = append(names, name)
 	}
-	for bufname := range printers.TestBufferPatterns {
+	for bufname := range thermoprint.TestBufferPatterns {
 		names = append(names, bufname)
 	}
 	slices.Sort(names)

@@ -1,6 +1,6 @@
-// Package printers implements printing on a LX-D02 (Dolebo) bluetooth thermal
+// Package thermoprint implements printing on a LX-D02 (Dolebo) bluetooth thermal
 // printer.
-package printers
+package thermoprint
 
 import (
 	"bytes"

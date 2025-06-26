@@ -10,7 +10,7 @@ import (
 
 	"tinygo.org/x/bluetooth"
 
-	"github.com/rusq/thermoprint/printers"
+	"github.com/rusq/thermoprint"
 )
 
 var adapter = bluetooth.DefaultAdapter
@@ -21,7 +21,7 @@ var (
 	JSONHandler bool   = os.Getenv("JSON_LOG") != ""
 	Verbose     bool   = os.Getenv("DEBUG") != ""
 
-	SearchParams printers.SearchParameters
+	SearchParams thermoprint.SearchParameters
 	Energy       uint
 	PrintDelay   time.Duration
 	DryRun       bool = os.Getenv("DRY_RUN") == "1"
@@ -55,14 +55,14 @@ func SetBaseFlags(fs *flag.FlagSet, mask FlagMask) {
 		fs.StringVar(&SearchParams.Name, "p", "LX-D02", "Printer name to use")
 		fs.StringVar(&SearchParams.MACAddress, "mac", "", "MAC address of the printer")
 		fs.UintVar(&Energy, "e", 2, "Thermal energy `level` (0-6), higher is darker printout")
-		fs.DurationVar(&PrintDelay, "d", printers.DefaultPrintDelay, "Delay between print commands")
+		fs.DurationVar(&PrintDelay, "d", thermoprint.DefaultPrintDelay, "Delay between print commands")
 		fs.BoolVar(&DryRun, "dry", DryRun, "dry run, do not print, but create preview files")
 	}
 
 	if mask&OmitCommonImageFlags == 0 {
-		fs.Float64Var(&Gamma, "gamma", printers.DefaultGamma, "Gamma correction for dithering")
+		fs.Float64Var(&Gamma, "gamma", thermoprint.DefaultGamma, "Gamma correction for dithering")
 		fs.BoolVar(&Crop, "crop", false, "Crop image to printer width instead of resizing")
-		fs.StringVar(&Dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", printers.AllDitherFunctions()))
+		fs.StringVar(&Dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", thermoprint.AllDitherFunctions()))
 		fs.BoolVar(&AutoDither, "auto-dither", false, "automatically disables dithering if a document is detected")
 	}
 }

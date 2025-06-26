@@ -1,4 +1,4 @@
-package printers
+package thermoprint
 
 import (
 	"bytes"

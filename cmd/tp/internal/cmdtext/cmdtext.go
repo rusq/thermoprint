@@ -11,10 +11,10 @@ import (
 
 	"golang.org/x/image/font"
 
+	"github.com/rusq/thermoprint"
 	"github.com/rusq/thermoprint/cmd/tp/internal/bootstrap"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 	"github.com/rusq/thermoprint/fontmgr"
-	"github.com/rusq/thermoprint/printers"
 )
 
 var CmdText = &base.Command{
@@ -40,7 +40,7 @@ func init() {
 	CmdText.Flag.StringVar(&FontName, "font", "toshiba", "select a built-in font `name`")
 	CmdText.Flag.BoolVar(&ListFonts, "list-fonts", false, "lists built-in fonts")
 	CmdText.Flag.Float64Var(&TTFFontSize, "font-size", 5.0, "font size in `pt` for true-type fonts")
-	CmdText.Flag.Float64Var(&TTFDPI, "dpi", float64(printers.LXD02Rasteriser.Dpi), "DPI for TrueType fonts")
+	CmdText.Flag.Float64Var(&TTFDPI, "dpi", float64(thermoprint.LXD02Rasteriser.Dpi), "DPI for TrueType fonts")
 }
 
 func runText(ctx context.Context, cmd *base.Command, args []string) error {
