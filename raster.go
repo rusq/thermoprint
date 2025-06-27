@@ -171,7 +171,7 @@ func (r *Raster) Enumerate(data [][]byte) ([][]byte, error) {
 	var ret = make([][]byte, len(data))
 	for i, line := range data {
 		if len(line) != msgDataSz {
-			return nil, fmt.Errorf("corrupt raw data on line %d", i)
+			return nil, fmt.Errorf("corrupt raw data on line %d, length mismatch %d < %d", i, len(line), msgDataSz)
 		}
 		row := make([]byte, 0, msgPayloadSz)
 

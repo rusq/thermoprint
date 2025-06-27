@@ -105,3 +105,16 @@ func dBayer(img image.Image, gamma float64) image.Image {
 	d.Draw(dithered, dithered.Bounds(), imaging.AdjustGamma(img, gamma), image.Point{})
 	return dithered
 }
+
+func resizeY(dst *image.RGBA, newHeight int) *image.RGBA {
+	// Resize the destination image to the new height
+	if newHeight <= dst.Bounds().Dy() {
+		return dst // no need to resize
+	}
+	newRect := image.Rect(0, 0, dst.Bounds().Dx(), newHeight)
+	newImg := image.NewRGBA(newRect)
+	draw.Draw(newImg, newRect, image.White, image.Point{}, draw.Src) // fill with white
+	// fill the new image with the current destination image
+	draw.Draw(newImg, dst.Bounds(), dst, image.Point{}, draw.Src)
+	return newImg
+}

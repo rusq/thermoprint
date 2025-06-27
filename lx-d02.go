@@ -86,7 +86,7 @@ type Option func(*lxd02options)
 
 func WithEnergy(v uint8) Option {
 	if v > 6 {
-		v = 6 // Cap brightness to 6
+		v = 6 // Cap energy to 6
 	}
 	return func(o *lxd02options) {
 		o.energy = v
