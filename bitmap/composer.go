@@ -87,7 +87,7 @@ func (c *Composer) appendImageDither(img image.Image, dfn DitherFunc) {
 		// default to no dithering
 		img = DitherThresholdFn(DefaultThreshold)(img, DefaultGamma)
 	}
-	draw.Draw(c.dst, img.Bounds(), img, c.sp, draw.Over)
+	draw.Draw(c.dst, img.Bounds().Add(c.sp), img, image.Point{}, draw.Src)
 	c.sp.Y += img.Bounds().Dy() // move down by the height of the new image
 	c.sp.X = 0                  // reset X position to the start of the line
 }
@@ -115,24 +115,24 @@ func (c *Composer) Bounds() image.Rectangle {
 	return c.dst.Bounds()
 }
 
-type composeCommand string
+type documentCommand string
 
 const (
-	ccImage  = ".image"
-	ccImageS = ".im"
-	ccFont   = ".font"
-	ccFontS  = ".ft"
-	ccAlign  = ".align"
-	ccAlignS = ".al"
+	dcImage  = ".image"
+	dcImageS = ".im"
+	dcFont   = ".font"
+	dcFontS  = ".ft"
+	dcAlign  = ".align"
+	dcAlignS = ".al"
 )
 
 var commands = map[string]func(doc *Document, args ...string) error{
-	ccImage:  (*Document).cmdImage, // embed image
-	ccImageS: (*Document).cmdImage, // embed image
-	ccFont:   (*Document).cmdFont,  // set font
-	ccFontS:  (*Document).cmdFont,  // set font
-	ccAlign:  (*Document).cmdAlign, // align text
-	ccAlignS: (*Document).cmdAlign, // align text
+	dcImage:  (*Document).cmdImage, // embed image
+	dcImageS: (*Document).cmdImage, // embed image
+	dcFont:   (*Document).cmdFont,  // set font
+	dcFontS:  (*Document).cmdFont,  // set font
+	dcAlign:  (*Document).cmdAlign, // align text
+	dcAlignS: (*Document).cmdAlign, // align text
 }
 
 type textAlign int
