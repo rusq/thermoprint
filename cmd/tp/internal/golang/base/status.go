@@ -11,4 +11,5 @@ const (
 	SGenericError                        // Generic Error
 	SHelpRequested                       // Help Requested
 	SInvalidParameters                   // Invalid Parameters
+	SApplicationError                    // Application Error
 )

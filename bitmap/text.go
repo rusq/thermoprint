@@ -1,4 +1,4 @@
-package thermoprint
+package bitmap
 
 import (
 	"image"
@@ -13,7 +13,7 @@ var (
 	replacer = strings.NewReplacer("\t", strings.Repeat(" ", 8))
 )
 
-func renderTTF(text string, face font.Face, imgWidth int) (image.Image, error) {
+func RenderTTF(text string, face font.Face, imgWidth int) (image.Image, error) {
 	lines := strings.Split(text, "\n")
 	imgHeight := len(lines) * face.Metrics().Height.Ceil()
 	// lineHeight := face.Metrics().Ascent.Ceil() + face.Metrics().Height.Ceil()

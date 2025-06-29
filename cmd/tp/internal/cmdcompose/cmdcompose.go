@@ -1,4 +1,4 @@
-package dosomething
+package cmdcompose
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/rusq/thermoprint/bitmap"
+	"github.com/rusq/thermoprint/cmd/tp/internal/bootstrap"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cfg"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 )
@@ -20,8 +22,10 @@ This is a sample command to get you started.
 `,
 }
 
+var ditherText bool
+
 func init() {
-	CmdDoSomething.Flag.StringVar(&CustomFlag, "custom-flag", "", "custom flag is different than the global flags")
+	CmdCompose.Flag.BoolVar(&ditherText, "dither-text", false, "dither text")
 }
 
 func runCompose(ctx context.Context, cmd *base.Command, args []string) error {
@@ -42,17 +46,27 @@ func runCompose(ctx context.Context, cmd *base.Command, args []string) error {
 		}
 		defer f.Close()
 	}
-
-	img, err := thermoprint.ParseComposeScript(f)
+	prn, err := bootstrap.Printer(ctx)
 	if err != nil {
-		base.SetExitStatus(base.SApplicationError)
-		return fmt.Errorf("unable to parse compose script: %w", err)
+		return err
 	}
-	if cfg.DryRun {
-		fmt.Println("Dry run: would print the following image:")
-		fmt.Println(img)
-		return nil
+	dfn, ok := bitmap.DitherFunction(cfg.Dither)
+	if !ok {
+		return fmt.Errorf("unknown dithering function: %s", cfg.Dither)
 	}
+	c := bitmap.NewComposer(
+		prn.Width(),
+		bitmap.WithComposerCrop(cfg.Crop),
+		bitmap.WithComposerDitherFunc(dfn),
+		bitmap.WithComposerDitherText(ditherText),
+	)
 
-	return nil
+	doc := bitmap.NewDocument(c, prn.DPI())
+	if err := doc.Parse(f); err != nil {
+		base.SetExitStatus(base.SApplicationError)
+		return err
+	}
+	img := doc.Image()
+
+	return prn.PrintImage(ctx, img)
 }

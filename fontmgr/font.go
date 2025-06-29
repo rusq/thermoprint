@@ -110,6 +110,17 @@ func atoiv[T ~uint8](s string, lo, hi int) (T, error) {
 
 const defaultFont = "toshiba"
 
+var DefaultFont font.Face
+
+func init() {
+	fnt, err := LoadByName(defaultFont)
+	if err != nil {
+		panic(fmt.Errorf("failed to load default font %q: %w", defaultFont, err))
+	}
+	DefaultFont = fnt
+	slog.Debug("default font loaded", "name", defaultFont)
+}
+
 func LoadFromFile(filename string, size float64, dpi float64) (font.Face, error) {
 	if filename == "" {
 		// load default font

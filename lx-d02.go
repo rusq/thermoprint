@@ -17,6 +17,8 @@ import (
 
 	"golang.org/x/image/font"
 	"tinygo.org/x/bluetooth"
+
+	"github.com/rusq/thermoprint/bitmap"
 )
 
 const (
@@ -58,7 +60,7 @@ type LXD02 struct {
 	options lxd02options
 }
 
-var LXD02Rasteriser = &Raster{
+var LXD02Rasteriser = &GenericRasteriser{
 	Width:          384, // 48 bytes
 	Dpi:            203, // 203 DPI
 	LinesPerPacket: 2,   // 2 lines per packet
@@ -67,9 +69,9 @@ var LXD02Rasteriser = &Raster{
 		n := byte(packetIndex & 0xFF)
 		return []byte{0x55, m, n} // 55 m n
 	},
-	Terminator: 0x00,             // 00
-	Threshold:  DefaultThreshold, // default threshold for dark pixels
-	DitherFunc: ditherimg,        // default dither function
+	Terminator: 0x00,                    // 00
+	Threshold:  bitmap.DefaultThreshold, // default threshold for dark pixels
+	DitherFunc: bitmap.DitherDefault,    // default dither function
 }
 
 type lxd02options struct {
@@ -121,10 +123,6 @@ func WithCrop(crop bool) Option {
 
 func WithDither(name string) Option {
 	return func(o *lxd02options) {
-		_, ok := ditherFunctions[name]
-		if !ok {
-			return
-		}
 		o.dithername = name
 	}
 }
@@ -177,7 +175,7 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 	}
 
 	if opts.dithername != "" {
-		ditherFunc, ok := ditherFunctions[opts.dithername]
+		ditherFunc, ok := bitmap.DitherFunction(opts.dithername)
 		if !ok {
 			return nil, fmt.Errorf("unknown dither function: %s", opts.dithername)
 		}
@@ -399,7 +397,7 @@ func (p *LXD02) printPackets(ctx context.Context, packets [][]byte) error {
 
 func (p *LXD02) PrintTextTTF(ctx context.Context, text string, face font.Face) error {
 	// rasterizeText
-	img, err := renderTTF(text, face, p.rasteriser.LineWidth())
+	img, err := bitmap.RenderTTF(text, face, p.rasteriser.LineWidth())
 	if err != nil {
 		return fmt.Errorf("failed to render TTF text: %w", err)
 	}
@@ -537,6 +535,10 @@ func (p *LXD02) sendAndWait(data []byte, expectPrefix []byte, timeout time.Durat
 // Width returns the maximum width of the print output in pixels.
 func (p *LXD02) Width() int {
 	return p.rasteriser.LineWidth()
+}
+
+func (p *LXD02) DPI() float64 {
+	return float64(p.rasteriser.DPI())
 }
 
 func (p *LXD02) PrintPattern(ctx context.Context, pattern string) error {

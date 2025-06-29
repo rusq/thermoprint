@@ -52,7 +52,7 @@ func runText(ctx context.Context, cmd *base.Command, args []string) error {
 		return errors.New("expected exactly one argument")
 	}
 
-	text := args[0]
+	file := args[0]
 
 	var face font.Face
 	if FontFile != "" {
@@ -68,13 +68,20 @@ func runText(ctx context.Context, cmd *base.Command, args []string) error {
 		}
 		face = fc
 	}
-	if text == "-" {
+	var text string
+	if file == "-" {
 		// Read text from stdin if "-" is specified
 		var buf bytes.Buffer
 		if _, err := buf.ReadFrom(os.Stdin); err != nil {
 			return fmt.Errorf("failed to read text from stdin: %w", err)
 		}
 		text = buf.String()
+	} else {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("error reading file: %w", err)
+		}
+		text = string(data)
 	}
 
 	prn, err := bootstrap.Printer(ctx)

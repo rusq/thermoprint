@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/rusq/thermoprint/cmd/tp/internal/cfg"
+	"github.com/rusq/thermoprint/cmd/tp/internal/cmdcompose"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdimage"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdpattern"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdtext"
@@ -24,6 +25,7 @@ func init() {
 		// Add commands here.
 		cmdimage.CmdImage,
 		cmdtext.CmdText,
+		cmdcompose.CmdCompose,
 		cmdpattern.CmdPattern,
 	}
 }

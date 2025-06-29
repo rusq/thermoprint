@@ -11,6 +11,7 @@ import (
 	"tinygo.org/x/bluetooth"
 
 	"github.com/rusq/thermoprint"
+	"github.com/rusq/thermoprint/bitmap"
 )
 
 var adapter = bluetooth.DefaultAdapter
@@ -60,9 +61,9 @@ func SetBaseFlags(fs *flag.FlagSet, mask FlagMask) {
 	}
 
 	if mask&OmitCommonImageFlags == 0 {
-		fs.Float64Var(&Gamma, "gamma", thermoprint.DefaultGamma, "Gamma correction for dithering")
+		fs.Float64Var(&Gamma, "gamma", bitmap.DefaultGamma, "Gamma correction for dithering")
 		fs.BoolVar(&Crop, "crop", false, "Crop image to printer width instead of resizing")
-		fs.StringVar(&Dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", thermoprint.AllDitherFunctions()))
+		fs.StringVar(&Dither, "dither", "", fmt.Sprintf("Dithering algorithm to use, one of: %v", bitmap.AllDitherFunctions()))
 		fs.BoolVar(&AutoDither, "auto-dither", false, "automatically disables dithering if a document is detected")
 	}
 }
