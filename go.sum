@@ -14,6 +14,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rusq/fontpic v0.0.5 h1:AIBwpbTVXiXn5xmMwdpP1JNJpBvV2w1OpmTnCyG3Um4=
 github.com/rusq/fontpic v0.0.5/go.mod h1:ahRvNj4bzwRn0FmVS+koDxbNP72+znPAjMXpGLGfzsk=
+github.com/rusq/fontpic v0.0.6 h1:gcx3GA5nxwZ2wiANT0lKw/mEyKS7RXEN5H2XI/YD018=
+github.com/rusq/fontpic v0.0.6/go.mod h1:ahRvNj4bzwRn0FmVS+koDxbNP72+znPAjMXpGLGfzsk=
 github.com/saltosystems/winrt-go v0.0.0-20241223121953-98e32661f6ff h1:cCYo/NzsEvK9MedoaqkVY8kCp4g1QMyKOYlA/uJwO7g=
 github.com/saltosystems/winrt-go v0.0.0-20241223121953-98e32661f6ff/go.mod h1:CIltaIm7qaANUIvzr0Vmz71lmQMAIbGJ7cvgzX7FMfA=
 github.com/sirupsen/logrus v1.5.0/go.mod h1:+F7Ogzej0PZc/94MaYx/nvG9jOFMD2osvC3s+Squfpo=

@@ -5,7 +5,7 @@ go 1.24.2
 require (
 	github.com/disintegration/imaging v1.6.2
 	github.com/makeworld-the-better-one/dither/v2 v2.4.0
-	github.com/rusq/fontpic v0.0.5
+	github.com/rusq/fontpic v0.0.6
 	github.com/stretchr/testify v1.7.5
 	golang.org/x/image v0.28.0
 	tinygo.org/x/bluetooth v0.12.0

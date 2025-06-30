@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,17 +24,76 @@ import (
 var fontFS embed.FS
 
 type BitmapFont struct {
-	Name     string
-	Width    uint8
-	Height   uint8
-	Filename string
+	Name       string
+	Width      uint8
+	Height     uint8
+	Filename   string
+	IsEmbedded bool // true if the font is embedded in the binary form
+}
+
+var embeddedFonts = map[string]font.Face{
+	"keyrus16":  fontpic.Face8x16,
+	"keyrus14":  fontpic.Face8x14,
+	"keyrus8":   fontpic.Face8x8,
+	"4x4":       fontpic.Face4x4,
+	"4x4bold":   fontpic.Face4x4Bold,
+	"4x4italic": fontpic.Face4x4Italic,
+	"4x5":       fontpic.Face4x5,
+	"6x5":       fontpic.Face6x5,
+	"6x5bold":   fontpic.Face6x5Bold,
+	"6x5italic": fontpic.Face6x5Italic,
+	"robotron":  fontpic.FaceRobotron,
 }
 
 var (
 	errStop       = errors.New("stop")
 	errDimInvalid = errors.New("dimensions invalid")
 	errSkip       = errors.New("skip")
+	ErrNotFound   = errors.New("not found")
 )
+
+func ListAllFonts(cb func(BitmapFont, error) error) error {
+	if err := ListEmbedded(cb); err != nil {
+		return fmt.Errorf("error listing embedded fonts: %w", err)
+	}
+
+	if err := LoadFontCatalogue(cb); err != nil {
+		slog.Error("error loading font catalogue", "error", err)
+	}
+
+	return nil
+}
+
+func ListEmbedded(cb func(BitmapFont, error) error) error {
+	var sorted []BitmapFont
+	for name, face := range embeddedFonts {
+		if face == nil {
+			continue
+		}
+		adv := font.MeasureString(face, "W")
+		fnt := BitmapFont{
+			Name:       name,
+			Height:     uint8(face.Metrics().Height.Ceil()),
+			Width:      uint8(adv.Ceil()),
+			Filename:   "",
+			IsEmbedded: true,
+		}
+		sorted = append(sorted, fnt)
+	}
+	// Sort by name
+	slices.SortFunc(sorted, func(a, b BitmapFont) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	for _, fnt := range sorted {
+		if err := cb(fnt, nil); err != nil {
+			if errors.Is(err, errStop) {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
 
 func LoadFontCatalogue(cb func(BitmapFont, error) error) error {
 	f, err := fontFS.Open("fonts/fonts.csv")
@@ -204,8 +264,27 @@ func loadTTF(filename string, size float64, dpi float64) (font.Face, error) {
 	return face, nil
 }
 
+func LoadEmbedded(name string) (font.Face, error) {
+	face, ok := embeddedFonts[name]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return face, nil
+}
+
 // LoadByName loads a built-in font by it's name
 func LoadByName(name string) (font.Face, error) {
+	face, err := LoadEmbedded(name)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return loadFromFS(name)
+		}
+		return nil, err
+	}
+	return face, nil
+}
+
+func loadFromFS(name string) (font.Face, error) {
 	var fnt *BitmapFont
 	if err := LoadFontCatalogue(func(bif BitmapFont, err error) error {
 		if err != nil {
@@ -221,7 +300,7 @@ func LoadByName(name string) (font.Face, error) {
 		return nil, err
 	}
 	if fnt == nil {
-		return nil, fmt.Errorf("font %q not found", name)
+		return nil, fmt.Errorf("font %q: %w", name, ErrNotFound)
 	}
 	data, err := fs.ReadFile(fontFS, path.Join("fonts/", fnt.Filename))
 	if err != nil {

@@ -93,11 +93,15 @@ func runText(ctx context.Context, cmd *base.Command, args []string) error {
 }
 
 func listFonts(w io.Writer) error {
-	if err := fontmgr.LoadFontCatalogue(func(fnt fontmgr.BitmapFont, err error) error {
+	if err := fontmgr.ListAllFonts(func(fnt fontmgr.BitmapFont, err error) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "%20s (%dx%d)\n", fnt.Name, fnt.Width, fnt.Height)
+		var embedded = ""
+		if fnt.IsEmbedded {
+			embedded = " (embedded)"
+		}
+		fmt.Fprintf(w, "%20s (%dx%d)%s\n", fnt.Name, fnt.Width, fnt.Height, embedded)
 		return nil
 	}); err != nil {
 		return err
