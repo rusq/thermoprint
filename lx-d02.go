@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/image/font"
@@ -41,9 +42,11 @@ const (
 // LXD02 represents a LX-D02 printer.  Instance is not safe for concurrent use.
 // Zero value is unusable, initialise with [NewLXD02]
 type LXD02 struct {
-	dev        bluetooth.Device
-	tx         bluetooth.DeviceCharacteristic
-	rx         bluetooth.DeviceCharacteristic
+	dev       bluetooth.Device
+	tx        bluetooth.DeviceCharacteristic
+	rx        bluetooth.DeviceCharacteristic
+	connected atomic.Bool // Indicates if the printer is connected
+
 	buffer     [][]byte
 	rasteriser Rasteriser // Interface for rasterizing images
 
@@ -57,7 +60,7 @@ type LXD02 struct {
 	waitingPrefix []byte
 	responseCh    chan []byte
 
-	options lxd02options
+	options printOptions
 }
 
 var LXD02Rasteriser = &GenericRasteriser{
@@ -74,7 +77,7 @@ var LXD02Rasteriser = &GenericRasteriser{
 	DitherFunc: bitmap.DitherDefault,    // default dither function
 }
 
-type lxd02options struct {
+type printOptions struct {
 	energy        uint8         // 0-6
 	printInterval time.Duration // Interval between sending data packets
 	crop          bool          // crop instead of scaling
@@ -84,13 +87,13 @@ type lxd02options struct {
 	autoDither    bool
 }
 
-type Option func(*lxd02options)
+type Option func(*printOptions)
 
 func WithEnergy(v uint8) Option {
 	if v > 6 {
 		v = 6 // Cap energy to 6
 	}
-	return func(o *lxd02options) {
+	return func(o *printOptions) {
 		o.energy = v
 	}
 }
@@ -99,7 +102,7 @@ func WithPrintInterval(d time.Duration) Option {
 	if d <= 0 || 10*time.Second < d {
 		d = DefaultPrintDelay // Default to 7ms if invalid
 	}
-	return func(o *lxd02options) {
+	return func(o *printOptions) {
 		o.printInterval = d
 	}
 }
@@ -108,7 +111,7 @@ func WithPrintInterval(d time.Duration) Option {
 // [DefaultGamma] value or 0.0 means use default for the selected dither
 // function.
 func WithGamma(gamma float64) Option {
-	return func(l *lxd02options) {
+	return func(l *printOptions) {
 		if gamma > 0.0 {
 			l.gamma = gamma
 		}
@@ -116,31 +119,31 @@ func WithGamma(gamma float64) Option {
 }
 
 func WithCrop(crop bool) Option {
-	return func(o *lxd02options) {
+	return func(o *printOptions) {
 		o.crop = crop
 	}
 }
 
 func WithDither(name string) Option {
-	return func(o *lxd02options) {
+	return func(o *printOptions) {
 		o.dithername = name
 	}
 }
 
 func WithDryRun(dryrun bool) Option {
-	return func(o *lxd02options) {
+	return func(o *printOptions) {
 		o.dryrun = dryrun
 	}
 }
 
 func WithAutoDither(isEnabled bool) Option {
-	return func(o *lxd02options) {
+	return func(o *printOptions) {
 		o.autoDither = isEnabled
 	}
 }
 
 func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters, opt ...Option) (*LXD02, error) {
-	var opts = lxd02options{
+	var opts = printOptions{
 		energy:        2, // Default energy level
 		printInterval: DefaultPrintDelay,
 	}
@@ -152,28 +155,10 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 		rasteriser: LXD02Rasteriser, // Default rasteriser for LXD02
 	}
 	if !opts.dryrun {
-		device, err := connectWithRetries(ctx, adapter, sp, 5)
-		if err != nil {
-			return nil, err
+		if err := prn.Connect(ctx, adapter, sp); err != nil {
+			return nil, fmt.Errorf("failed to connect to printer: %w", err)
 		}
-		prn.dev = device
-
-		txrx, err := locateCharacteristics(device, txChar, rxChar)
-		if err != nil {
-			return nil, fmt.Errorf("failed to locate services: %w", err)
-		}
-		prn.tx = txrx.tx
-		prn.rx = txrx.rx
-		slog.Info("Connected to printer", "address", device.Address, "mac", device.Address)
-
-		notifyCh := make(chan lxd02notification, 10)
-		if err := prn.rx.EnableNotifications(prn.notificationCallback(notifyCh)); err != nil {
-			return nil, fmt.Errorf("failed to enable notifications on TX characteristic: %w", err)
-		}
-		slog.Debug("enabled notifications, starting worker")
-		go prn.worker(ctx, notifyCh)
 	}
-
 	if opts.dithername != "" {
 		ditherFunc, ok := bitmap.DitherFunction(opts.dithername)
 		if !ok {
@@ -184,6 +169,40 @@ func NewLXD02(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParamete
 	}
 
 	return prn, nil
+}
+
+// Connect connects to the LX-D02 printer using the provided adapter and search parameters.
+func (p *LXD02) Connect(ctx context.Context, adapter *bluetooth.Adapter, sp SearchParameters) error {
+	if p.connected.Load() {
+		slog.Debug("Already connected to printer", "address", p.dev.Address)
+		return nil
+	}
+
+	device, err := connectWithRetries(ctx, adapter, sp, 5)
+	if err != nil {
+		return err
+	}
+	p.dev = device
+
+	txrx, err := locateCharacteristics(device, txChar, rxChar)
+	if err != nil {
+		return fmt.Errorf("failed to locate services: %w", err)
+	}
+	p.tx = txrx.tx
+	p.rx = txrx.rx
+	slog.Info("Connected to printer", "address", device.Address, "mac", device.Address)
+
+	notifyCh := make(chan lxd02notification, 10)
+	if err := p.rx.EnableNotifications(p.notificationCallback(notifyCh)); err != nil {
+		return fmt.Errorf("failed to enable notifications on TX characteristic: %w", err)
+	}
+	slog.Debug("enabled notifications, starting worker")
+	go p.worker(ctx, notifyCh)
+
+	p.connected.Store(true)
+	slog.Debug("Connected to printer", "address", p.dev.Address, "mac", p.dev.Address)
+
+	return nil
 }
 
 func (p *LXD02) notificationCallback(notifyCh chan<- lxd02notification) func(value []byte) {
@@ -572,4 +591,21 @@ func (p *LXD02) printBufferPattern(ctx context.Context, bufPatFn func(int) [][]b
 		return errors.New("buffer patterns do not support dry run")
 	}
 	return p.PrintRAW(ctx, data)
+}
+
+// SetOptions
+func (p *LXD02) SetOptions(opts ...Option) error {
+	for _, o := range opts {
+		o(&p.options)
+	}
+	if p.options.dithername != "" {
+		ditherFunc, ok := bitmap.DitherFunction(p.options.dithername)
+		if !ok {
+			slog.Warn("unknown dither function, using default", "name", p.options.dithername)
+			return nil
+		}
+		p.rasteriser.SetDitherFunc(ditherFunc)
+		slog.Debug("Using dither function", "name", p.options.dithername)
+	}
+	return nil
 }

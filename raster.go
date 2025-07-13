@@ -3,6 +3,7 @@ package thermoprint
 import (
 	"fmt"
 	"image"
+	"log/slog"
 
 	"github.com/rusq/thermoprint/bitmap"
 )
@@ -57,6 +58,7 @@ func (r *GenericRasteriser) ResizeAndDither(src image.Image, gamma float64, auto
 
 	resized := bitmap.ResizeToFit(src, r.Width)
 	if autoDither && bitmap.IsDocument(resized, 50, 200) {
+		slog.Info("Image is a document, skipping dithering", "autodither", autoDither, "width", r.Width, "height", resized.Bounds().Dy())
 		// If the image is not a document, apply dithering
 		return resized
 	}

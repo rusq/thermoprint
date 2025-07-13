@@ -8,5 +8,8 @@ __debug*
 /*.txt
 *.ttf
 /tp
-/protodump
-/spool
+*.pdf
+*.json
+*.bin
+protodump/*
+spool/*

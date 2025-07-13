@@ -59,7 +59,7 @@ func AllDitherFunctions() []string {
 
 // DitherDefault is the default dither function used in the rasteriser.
 func DitherDefault(img image.Image, gamma float64) image.Image {
-	return DAtkinson(img, gamma) // default dithering function
+	return DFloydSteinberg(img, gamma) // default dithering function
 }
 
 // diffusionDither returns a dither function that applies error diffusion dithering
