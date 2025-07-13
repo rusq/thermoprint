@@ -20,8 +20,8 @@ var MaxDocumentSize int64 = 104857600
 var Debug = osenv.Value("DEBUG", true)
 
 type Server struct {
-	pp  []testPrinter
-	srv *http.Server
+	pp  []Printer       // List of printers managed by the server
+	srv *http.Server    // HTTP server instance
 	is  *basicIPPServer // IPP server instance
 }
 
@@ -31,18 +31,19 @@ const (
 	hdrURISecuritySupported       = "uri-security-supported"
 	hdrPrinterURISupported        = "printer-uri-supported"
 
-	ippMIMEType = "application/ipp"
+	hdrContentType = "Content-Type"
+	ippMIMEType    = "application/ipp"
 )
 
 // Option is the server option.
 type Option func(*Server)
 
 // New returns a new IPP server.
-func New(pp ...testPrinter) (*Server, error) {
+func New(pp ...Printer) (*Server, error) {
 	if len(pp) == 0 {
 		return nil, errors.New("at least one printer must be provided")
 	}
-	ippsrv, err := newBasicIPPServer("/printers/", &ThermalPrinter)
+	ippsrv, err := newBasicIPPServer("/printers/", pp...)
 	if err != nil {
 		return nil, err
 	}

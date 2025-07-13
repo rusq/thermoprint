@@ -342,11 +342,7 @@ func (j *Job) attributes() goipp.Attributes {
 	return b.Operation
 }
 
+
 func (j *Job) reasons() []goipp.Value {
-	// Convert JobStateReasons to goipp.String
-	reasons := make([]goipp.Value, len(j.StateReasons))
-	for i, reason := range j.StateReasons {
-		reasons[i] = goipp.String(reason)
-	}
-	return reasons
+	return stringsToValues(j.StateReasons)
 }

@@ -181,7 +181,7 @@ func initTrace(filename string) error {
 // function is nil.
 func initLog(filename string, jsonHandler bool, verbose bool) (*slog.Logger, error) {
 	if verbose {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
+		cfg.SetDebugLevel()
 	}
 	var opts = &slog.HandlerOptions{
 		Level: iftrue(verbose, slog.LevelDebug, slog.LevelInfo),

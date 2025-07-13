@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/rusq/thermoprint/cmd/tp/internal/bootstrap"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 	"github.com/rusq/thermoprint/ippsrv"
 )
@@ -32,7 +33,13 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 		base.SetExitStatus(base.SInvalidParameters)
 		return fmt.Errorf("unexpected arguments: %v", args)
 	}
-	s, err := ippsrv.New(ippsrv.ThermalPrinter)
+	p, err := bootstrap.Printer(ctx)
+	if err != nil {
+		base.SetExitStatus(base.SApplicationError)
+		return fmt.Errorf("failed to get printer: %w", err)
+	}
+	ippPrn := ippsrv.WrapDriver(p, "default", "Thermal Printer")
+	s, err := ippsrv.New(ippPrn)
 	if err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return err

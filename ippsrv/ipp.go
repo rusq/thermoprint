@@ -100,33 +100,17 @@ func (ih *basicIPPServer) ServeIPP(ctx context.Context, req *goipp.Message, body
 	return next(ctx, req, body)
 }
 
-// adder is a helper function to add attributes to an operation.
-func adder(op goipp.Attributes) func(s string, tag goipp.Tag, values ...goipp.Value) {
-	return func(name string, tag goipp.Tag, values ...goipp.Value) {
-		if len(values) == 0 {
-			values = []goipp.Value{goipp.String("")}
-		}
-		attr := goipp.MakeAttribute(name, tag, values[0])
-		for _, v := range values[1:] {
-			attr.Values.Add(tag, v)
-		}
-		op.Add(attr)
-	}
-}
-
 func (ih *basicIPPServer) printerAttributes(p Printer) *goipp.Message {
-	var none = goipp.String("none")
-
 	m := baseResponse(scSuccessful)
 	a := adder(m.Operation)
 	a("printer-uri-supported", goipp.TagURI, goipp.String(ih.baseURL))
-	a("uri-authentication-supported", goipp.TagKeyword, none)
-	a("uri-security-supported", goipp.TagKeyword, none)
+	a("uri-authentication-supported", goipp.TagKeyword, ippNone)
+	a("uri-security-supported", goipp.TagKeyword, ippNone)
 	a("printer-name", goipp.TagName, goipp.String(p.Name()))
 	a("printer-info", goipp.TagText, goipp.String(p.Info()))
 	a("printer-make-and-model", goipp.TagText, goipp.String(p.MakeAndModel()))
 	a("printer-state", goipp.TagEnum, goipp.Integer(p.State()))
-	a("printer-state-reasons", goipp.TagKeyword, none)
+	a("printer-state-reasons", goipp.TagKeyword, ippNone)
 	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"))
 	a("ipp-operations-supported", goipp.TagEnum, goipp.Binary{
 		byte(goipp.OpPrintJob),
@@ -137,25 +121,23 @@ func (ih *basicIPPServer) printerAttributes(p Printer) *goipp.Message {
 		byte(goipp.OpGetPrinterAttributes),
 	})
 	a("multiple-document-jobs-supported", goipp.TagBoolean, goipp.Boolean(false))
-	a("charset-configured", goipp.TagCharset, goipp.String("utf-8"))
-	a("charset-supported", goipp.TagCharset, goipp.String("utf-8"))
-	a("natural-language-configured", goipp.TagLanguage, goipp.String("en"))
-	a("generated-natural-language-supported", goipp.TagLanguage, goipp.String("en"))
-	a("document-format-default", goipp.TagMimeType, goipp.String("application/pdf"))
-	a("document-format-supported", goipp.TagMimeType, goipp.String("application/pdf"))
+	a("charset-configured", goipp.TagCharset, ippUTF8)
+	a("charset-supported", goipp.TagCharset, ippUTF8)
+	a("natural-language-configured", goipp.TagLanguage, ippENUS)
+	a("generated-natural-language-supported", goipp.TagLanguage, ippENUS)
+	a("document-format-default", goipp.TagMimeType, ippApplicationPDF)
+	a("document-format-supported", goipp.TagMimeType, ippApplicationPDF)
 	a("printer-is-accepting-jobs", goipp.TagBoolean, goipp.Boolean(p.Ready()))
 	a("queued-job-count", goipp.TagInteger, goipp.Integer(ih.spool.GetJobCount(p.Name()))) // TODO: interrogate spooler for queued jobs for this printer
 	a("pdl-override-supported", goipp.TagKeyword, goipp.String("not-attempted"))
 	a("printer-up-time", goipp.TagInteger, goipp.Integer(p.UpTime()))
-	a("compression-supported", goipp.TagKeyword, none)
-	a("media-supported", goipp.TagKeyword, goipp.String(p.MediaSupported()))
+	a("compression-supported", goipp.TagKeyword, ippNone)
+	a("media-supported", goipp.TagKeyword, stringsToValues(p.MediaSupported())...)
 	a("media-default", goipp.TagKeyword, goipp.String(p.MediaDefault()))
 	a("printer-uuid", goipp.TagURI, goipp.String(p.UUID()))
 
 	return m
 }
-
-const hdrContentType = "Content-Type"
 
 func (ih *basicIPPServer) handleGetPrinterAttributes(ctx context.Context, req *goipp.Message, _ []byte) (resp *goipp.Message, err error) {
 	p, err := ih.printerFromRequest(req)
@@ -199,32 +181,6 @@ func (ih *basicIPPServer) printerFromRequest(req *goipp.Message) (Printer, error
 	return nil, fmt.Errorf("printer %q not found", printerURI)
 }
 
-const (
-	codeOK     = 0
-	requestNum = 1
-)
-
-// https://datatracker.ietf.org/doc/html/rfc8011#section-4.1.6
-// https://datatracker.ietf.org/doc/html/rfc8011#appendix-B
-type statusCode string
-
-const (
-	scInformational statusCode = "informational"
-	scSuccessful    statusCode = "successful"
-	scRedirection   statusCode = "redirection"
-	scClientError   statusCode = "client-error"
-	scServerError   statusCode = "server-error"
-)
-
-func baseResponse(s statusCode) *goipp.Message {
-	m := goipp.NewRequest(goipp.DefaultVersion, codeOK, requestNum)
-	a := adder(m.Operation)
-	a("attributes-charset", goipp.TagCharset, goipp.String("utf-8"))
-	a("attributes-natural-language", goipp.TagLanguage, goipp.String("en"))
-	a("status-code", goipp.TagKeyword, goipp.String(s))
-	return m
-}
-
 func (ih *basicIPPServer) handleWithBaseResponse(ctx context.Context, req *goipp.Message, _ []byte) (resp *goipp.Message, err error) {
 	return baseResponse(scSuccessful), nil
 }
@@ -255,7 +211,7 @@ func (ih *basicIPPServer) handlePrintJob(ctx context.Context, req *goipp.Message
 	if err != nil {
 		return nil, fmt.Errorf("failed to get printer: %w", err)
 	}
-	j, err := createJobFromRequest(p, JobID(time.Now().Unix()), req)
+	j, err := createJobFromRequest(p, ih.baseURL, JobID(time.Now().Unix()), req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create job: %w", err)
 	}
@@ -263,29 +219,4 @@ func (ih *basicIPPServer) handlePrintJob(ctx context.Context, req *goipp.Message
 		return nil, fmt.Errorf("failed to add job to spool: %w", err)
 	}
 	return baseResponse(scSuccessful), nil
-}
-
-func findAttr(attrs goipp.Attributes, name string) (goipp.Values, bool) {
-	for _, attr := range attrs {
-		if attr.Name == name && len(attr.Values) > 0 {
-			return attr.Values, true
-		}
-	}
-	return nil, false
-}
-
-func extractValue[T any](attrs goipp.Attributes, name string) (T, error) {
-	var zero T
-	vv, ok := findAttr(attrs, name)
-	if !ok || len(vv) == 0 {
-		return zero, fmt.Errorf("attribute %q not found", name)
-	}
-	if len(vv) > 1 {
-		return zero, fmt.Errorf("attribute %q has multiple values: %d", name, len(vv))
-	}
-	v := vv[0].V
-	if val, ok := v.(T); ok {
-		return val, nil
-	}
-	return zero, fmt.Errorf("attribute %q is not of type %T: %T", name, zero, v)
 }

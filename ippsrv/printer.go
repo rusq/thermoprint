@@ -79,11 +79,22 @@ type Driver interface {
 	PrintImage(ctx context.Context, img image.Image) error
 }
 
-// TODO: temporary printer implementation, should be provided by the caller.
-var ThermalPrinter = testPrinter{
-	Fullname: "LX-D02 Thermal Printer",
-	Id:       "default",
-	state:    PSIdle,
+func WrapDriver(drv Driver, fullname, id string) Printer {
+	if drv == nil {
+		panic("driver cannot be nil")
+	}
+	if fullname == "" {
+		panic("printer fullname cannot be empty")
+	}
+	if id == "" {
+		panic("printer ID cannot be empty")
+	}
+	return &testPrinter{
+		Fullname: fullname,
+		Id:       id,
+		state:    PSIdle, // Set initial state to idle
+		Drv:      drv,
+	}
 }
 
 func (p *testPrinter) Name() string {
