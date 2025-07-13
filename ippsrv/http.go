@@ -65,6 +65,19 @@ func New(pp ...Printer) (*Server, error) {
 	return s, nil
 }
 
+// Info is the SIGINFO response for the server.
+func (s *Server) Info(w io.Writer) {
+	fmt.Fprintf(w, "*** IPP Server Info ***\n")
+	fmt.Fprintf(w, "Base URL: %s\n", s.is.baseURL)
+	fmt.Fprintf(w, "Printers:\n")
+	for name := range s.is.Printer {
+		fmt.Fprintf(w, "  - %s\n", name)
+	}
+	fmt.Fprintf(w, "Server Address: %s\n", s.srv.Addr)
+	fmt.Fprintf(w, "Debug Mode: %t\n", Debug)
+	fmt.Fprintf(w, "Max Document Size: %d bytes\n", MaxDocumentSize)
+}
+
 func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 	prnName := r.PathValue("name")
 	if prnName == "" {

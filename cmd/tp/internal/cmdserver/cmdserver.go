@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/rusq/thermoprint/cmd/tp/internal/bootstrap"
+	"github.com/rusq/thermoprint/cmd/tp/internal/cfg"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 	"github.com/rusq/thermoprint/ippsrv"
 )
@@ -38,12 +39,17 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 		base.SetExitStatus(base.SApplicationError)
 		return fmt.Errorf("failed to get printer: %w", err)
 	}
-	ippPrn := ippsrv.WrapDriver(p, "default", "Thermal Printer")
+	ippPrn, err := ippsrv.WrapDriver(p, "default", "Thermal Printer")
+	if err != nil {
+		base.SetExitStatus(base.SApplicationError)
+		return fmt.Errorf("failed to wrap printer: %w", err)
+	}
 	s, err := ippsrv.New(ippPrn)
 	if err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return err
 	}
+	cfg.RegisterSigInfoReporter(s.Info)
 	go func() {
 		<-ctx.Done()
 		if err := s.Shutdown(context.Background()); err != nil {

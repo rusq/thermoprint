@@ -118,6 +118,8 @@ func invoke(cmd *base.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	trapSigInfo()
+
 	ctx, task := trace.NewTask(ctx, "command")
 	defer task.End()
 

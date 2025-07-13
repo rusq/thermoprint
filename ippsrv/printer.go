@@ -79,22 +79,22 @@ type Driver interface {
 	PrintImage(ctx context.Context, img image.Image) error
 }
 
-func WrapDriver(drv Driver, fullname, id string) Printer {
+func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
 	if drv == nil {
-		panic("driver cannot be nil")
+		return nil, errors.New("driver cannot be nil")
 	}
 	if fullname == "" {
-		panic("printer fullname cannot be empty")
+		return nil, errors.New("printer fullname cannot be empty")
 	}
 	if id == "" {
-		panic("printer ID cannot be empty")
+		return nil, errors.New("printer ID cannot be empty")
 	}
 	return &testPrinter{
 		Fullname: fullname,
 		Id:       id,
 		state:    PSIdle, // Set initial state to idle
 		Drv:      drv,
-	}
+	}, nil
 }
 
 func (p *testPrinter) Name() string {
