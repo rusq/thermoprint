@@ -7,3 +7,6 @@ __debug*
 .DS_Store
 /*.txt
 *.ttf
+/tp
+/protodump
+/spool

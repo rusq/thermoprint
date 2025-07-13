@@ -15,6 +15,7 @@ import (
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdcompose"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdimage"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdpattern"
+	"github.com/rusq/thermoprint/cmd/tp/internal/cmdserver"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdtext"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/help"
@@ -27,6 +28,7 @@ func init() {
 		cmdtext.CmdText,
 		cmdcompose.CmdCompose,
 		cmdpattern.CmdPattern,
+		cmdserver.CmdServer,
 	}
 }
 
