@@ -402,7 +402,13 @@ func (p *LXD02) printPackets(ctx context.Context, packets [][]byte) error {
 	p.eventCh = make(chan fsmEvent, 10)
 	p.loadBuffer(packets)
 
-	go p.runFSM(ctx)
+	// pctx is the context for the FSM, it will be cancelled when the
+	// print job is done or if the context is cancelled.  It will stop
+	// the FSM goroutine.
+	pctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go p.runFSM(pctx)
 
 	p.eventCh <- fsmEvent{kind: eventStart}
 
