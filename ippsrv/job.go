@@ -193,13 +193,14 @@ func createJob(p Printer, id JobID, printerURI, jobURL, name, username string) (
 }
 
 func makeJobFSM(j *Job) *fsm.FSM {
+	lg := slog.With("job_id", j.ID, "job_name", j.Name, "printer", j.Printer.Name())
 	// Create a new FSM for the job with the initial state
 	return fsm.NewFSM(
 		JobPending.String(),
 		jobFsmEvts,
 		fsm.Callbacks{
 			jobEvtHeld: func(ctx context.Context, e *fsm.Event) {
-				slog.InfoContext(ctx, "Job held")
+				lg.InfoContext(ctx, "Job held")
 				j.State = JobPendingHeld
 				if len(e.Args) > 0 {
 					j.StateReasons = reasonsFromArgs(e.Args...)
@@ -208,33 +209,33 @@ func makeJobFSM(j *Job) *fsm.FSM {
 				}
 			},
 			jobEvtResume: func(ctx context.Context, e *fsm.Event) {
-				slog.InfoContext(ctx, "Job resumed")
+				lg.InfoContext(ctx, "Job resumed")
 				j.State = JobPending
 			},
 			jobEvtProcess: func(ctx context.Context, e *fsm.Event) {
-				slog.InfoContext(ctx, "Job processing started")
+				lg.InfoContext(ctx, "Job processing started")
 
 				j.State = JobProcessing
 				j.StateReasons = []JobStateReason{JSRJobPrinting, JSRJobTransforming}
 
 				// args should contain the data to print
 				if len(e.Args) == 0 {
-					slog.WarnContext(ctx, "No data provided for job processing")
+					lg.WarnContext(ctx, "No data provided for job processing")
 					// send the abort event if no data is provided, as we cannot recover.
 					if err := e.FSM.Event(ctx, jobEvtAbort, JSRJobDataInsufficient, JSRAbortedBySystem); err != nil {
-						slog.ErrorContext(ctx, "Failed to send abort event for job processing", "error", err)
+						lg.ErrorContext(ctx, "Failed to send abort event for job processing", "error", err)
 					}
 					return
 				} else if len(e.Args) > 1 {
-					slog.WarnContext(ctx, "Too many arguments provided for job processing, using only first arg", "args_count", len(e.Args))
+					lg.WarnContext(ctx, "Too many arguments provided for job processing, using only first arg", "args_count", len(e.Args))
 				}
 
 				var data []byte
 				if b, ok := e.Args[0].([]byte); !ok {
-					slog.WarnContext(ctx, "Invalid argument type for job processing, expected []byte", "arg_type", fmt.Sprintf("%T", e.Args[0]))
+					lg.WarnContext(ctx, "Invalid argument type for job processing, expected []byte", "arg_type", fmt.Sprintf("%T", e.Args[0]))
 					// send the abort event if the argument is not of type []byte
 					if err := e.FSM.Event(ctx, jobEvtAbort, JSRJobDataInsufficient, JSRAbortedBySystem); err != nil {
-						slog.ErrorContext(ctx, "Failed to send abort event for job processing", "error", err)
+						lg.ErrorContext(ctx, "Failed to send abort event for job processing", "error", err)
 					}
 					return
 				} else {
@@ -247,10 +248,10 @@ func makeJobFSM(j *Job) *fsm.FSM {
 				j.Processing = time.Now()        // Set the processing time to now
 				// Call the printer's Print method with the job data
 				if err := j.Printer.Print(ctx, data); err != nil {
-					slog.ErrorContext(ctx, "Failed to print job data", "error", err)
+					lg.ErrorContext(ctx, "Failed to print job data", "error", err)
 					// If printing fails, we can abort the job
 					if err := e.FSM.Event(ctx, jobEvtAbort, JSRDocumentFormatError, JSRAbortedBySystem); err != nil {
-						slog.ErrorContext(ctx, "Failed to send abort event for job processing", "error", err)
+						lg.ErrorContext(ctx, "Failed to send abort event for job processing", "error", err)
 					}
 					j.Printer.SetState(PSIdle) // Reset the printer state to idle
 					// TODO: job reprocess, if the printer is in stopped state.
@@ -261,11 +262,11 @@ func makeJobFSM(j *Job) *fsm.FSM {
 
 				// Trigger job completion event
 				if err := e.FSM.Event(ctx, jobEvtComplete); err != nil {
-					slog.ErrorContext(ctx, "Failed to send job completion event", "error", err)
+					lg.ErrorContext(ctx, "Failed to send job completion event", "error", err)
 				}
 			},
 			jobEvtStop: func(ctx context.Context, e *fsm.Event) {
-				slog.InfoContext(ctx, "Job processing stopped")
+				lg.InfoContext(ctx, "Job processing stopped")
 				j.State = JobProcessingStopped
 				if len(e.Args) > 0 {
 					j.StateReasons = reasonsFromArgs(e.Args...)
@@ -274,7 +275,7 @@ func makeJobFSM(j *Job) *fsm.FSM {
 				}
 			},
 			jobEvtAbort: func(ctx context.Context, e *fsm.Event) {
-				slog.InfoContext(ctx, "Job aborted")
+				lg.InfoContext(ctx, "Job aborted")
 				j.State = JobAborted
 				if len(e.Args) > 0 {
 					j.StateReasons = reasonsFromArgs(e.Args...)
@@ -283,13 +284,13 @@ func makeJobFSM(j *Job) *fsm.FSM {
 				}
 			},
 			jobEvtComplete: func(ctx context.Context, e *fsm.Event) {
-				slog.InfoContext(ctx, "Job completed")
+				lg.InfoContext(ctx, "Job completed")
 				j.State = JobCompleted
 				j.StateReasons = []JobStateReason{JSRJobCompletedSuccessfully}
 				j.Completed = time.Now() // Set the completion time to now
 			},
 			jobEvtCancel: func(ctx context.Context, e *fsm.Event) {
-				slog.InfoContext(ctx, "Job cancelled")
+				lg.InfoContext(ctx, "Job cancelled")
 				j.State = JobCancelled
 				if len(e.Args) > 0 {
 					j.StateReasons = reasonsFromArgs(e.Args...)
@@ -341,7 +342,6 @@ func (j *Job) attributes() goipp.Attributes {
 	a("job-printer-up-time", goipp.TagInteger, goipp.Integer(j.Printer.UpTime())) // https: //datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.4
 	return b.Operation
 }
-
 
 func (j *Job) reasons() []goipp.Value {
 	return stringsToValues(j.StateReasons)

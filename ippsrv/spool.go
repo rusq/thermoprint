@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const jobRetention = 24 * time.Hour // Duration to retain job files in the spool
+
 type spooler interface {
 	AddJob(ctx context.Context, job *Job, data []byte) error
 	RemoveJob(jobID JobID) error
@@ -45,9 +47,9 @@ func newSpool(spoolDir string) (*spool, error) {
 		slog.Info("using temporary spool directory", "dir", spoolDir)
 	} else {
 		slog.Info("using specified spool directory", "dir", spoolDir)
-	}
-	if err := os.MkdirAll(spoolDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create spool directory %s: %w", spoolDir, err)
+		if err := os.MkdirAll(spoolDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create spool directory %s: %w", spoolDir, err)
+		}
 	}
 	sp := &spool{
 		dir:         spoolDir,
@@ -87,6 +89,7 @@ func (s *spool) worker() {
 		case <-ticker.C:
 			s.mu.Lock()
 			slog.Info("spool worker running", "job_count", len(s.jobs))
+			s.pruneLocked()
 			s.mu.Unlock()
 		}
 	}
@@ -96,6 +99,17 @@ var (
 	errJobAlreadyExists = errors.New("job already exists")
 	errJobNotFound      = errors.New("job not found")
 )
+
+func (s *spool) pruneLocked() {
+	for jobID, job := range s.jobs {
+		if time.Since(job.Created) > jobRetention && (job.State == JobAborted || job.State == JobCompleted || job.State == JobCancelled) {
+			slog.Info("removing old job", "job_id", jobID, "created_at", job.Created)
+			if err := s.removeJobLocked(jobID); err != nil {
+				slog.Error("failed to remove old job", "job_id", jobID, "error", err)
+			}
+		}
+	}
+}
 
 func (s *spool) addJobLocked(job *Job) error {
 	if _, ok := s.jobs[job.ID]; ok {
@@ -121,6 +135,11 @@ func (s *spool) removeJobLocked(jobID JobID) error {
 	job, ok := s.jobs[jobID]
 	if !ok {
 		return errJobNotFound
+	}
+
+	filePath := s.jobFilePath(jobID)
+	if err := os.Remove(filePath); err != nil {
+		return fmt.Errorf("failed to remove job file %s: %w", filePath, err)
 	}
 
 	delete(s.jobs, jobID)

@@ -314,9 +314,11 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 					slog.Error("Failed to parse status", "error", err)
 					continue
 				}
-				slog.InfoContext(ctx, "status", "status", st)
-				if st.BatteryLevel < 10.0 {
-					slog.WarnContext(ctx, "battery level critical")
+				slog.DebugContext(ctx, "status", "status", st)
+				if st.BatteryLevel < 20.0 {
+					slog.WarnContext(ctx, "battery level low", "level", st.BatteryLevel)
+				} else if st.BatteryLevel < 10.0 {
+					slog.ErrorContext(ctx, "BATTERY LEVEL CRITICAL", "level", st.BatteryLevel)
 				}
 				if st.NoPaper {
 					slog.ErrorContext(ctx, "no paper")

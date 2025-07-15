@@ -1,9 +1,17 @@
 package ippsrv
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
+	"image/png"
+	_ "image/png" // Register PNG decoder
+	"io"
+	"log/slog"
+	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,7 +21,7 @@ import (
 
 var startTime = time.Now()
 
-type testPrinter struct {
+type basePrinter struct {
 	Fullname string
 	Id       string
 	state    PrinterState // Printer state, e.g., idle, processing, stopped
@@ -77,6 +85,9 @@ type Driver interface {
 	// PrintImage should print the given image to the printer. The image can be
 	// in any format and size, driver should handle the resizing and dithering.
 	PrintImage(ctx context.Context, img image.Image) error
+	// DPI should return the printer's DPI (dots per inch) setting, which is
+	// used to determine the resolution of the printed output.
+	DPI() float64
 }
 
 func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
@@ -89,7 +100,7 @@ func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
 	if id == "" {
 		return nil, errors.New("printer ID cannot be empty")
 	}
-	return &testPrinter{
+	return &basePrinter{
 		Fullname: fullname,
 		Id:       id,
 		state:    PSIdle, // Set initial state to idle
@@ -97,15 +108,15 @@ func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
 	}, nil
 }
 
-func (p *testPrinter) Name() string {
+func (p *basePrinter) Name() string {
 	return p.Id
 }
 
-func (p *testPrinter) MakeAndModel() string {
+func (p *basePrinter) MakeAndModel() string {
 	return p.Fullname
 }
 
-func (p *testPrinter) Info() string {
+func (p *basePrinter) Info() string {
 	return p.Fullname // TODO
 }
 
@@ -117,45 +128,110 @@ const (
 	PSStopped
 )
 
-func (p *testPrinter) State() PrinterState {
+func (p *basePrinter) State() PrinterState {
 	return p.state
 }
 
-func (p *testPrinter) Ready() bool {
+func (p *basePrinter) Ready() bool {
 	return true
 }
 
-func (p *testPrinter) UpTime() int {
+func (p *basePrinter) UpTime() int {
 	// https: //datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.4
 	return int(time.Since(startTime).Seconds()) // returns seconds since start
 }
 
-func (p *testPrinter) MediaSupported() []string {
+func (p *basePrinter) MediaSupported() []string {
 	return []string{"roll_57mm"}
 }
 
-func (p *testPrinter) MediaDefault() string {
+func (p *basePrinter) MediaDefault() string {
 	return "roll_57mm"
 }
 
-func (p *testPrinter) UUID() string {
+func (p *basePrinter) UUID() string {
 	return uuid.NewSHA1(uuid.UUID{}, []byte(p.Fullname)).String()
 }
 
-func (p *testPrinter) Driver() Driver {
+func (p *basePrinter) Driver() Driver {
 	return p.Drv
 }
 
-var ErrNoDriver = errors.New("no driver set for printer")
+var (
+	// ErrNoDriver is returned when the printer does not have a driver set.
+	ErrNoDriver = errors.New("no driver set for printer")
+	// ErrEmptyData is returned when the data to print is empty.
+	ErrEmptyData = errors.New("data cannot be empty")
+)
 
-func (p *testPrinter) Print(ctx context.Context, data []byte) error {
+func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 	if p.Drv == nil {
 		return ErrNoDriver
 	}
-	// TODO: handle data conversion.
-	return errors.New("implement me") // p.Drv.PrintImage(ctx, img)
+	if len(data) == 0 {
+		return ErrEmptyData
+	}
+	// try decoding the data as an image
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err == nil {
+		// fast path for images
+		return p.Drv.PrintImage(ctx, img)
+	}
+	// slow path for other data formats
+	// multiple formats can be supported, such as PostScript, PDF, etc.
+	images, err := convertWithMagick(ctx, int(p.Drv.DPI()), data)
+	if err != nil {
+		slog.Error("images", "len", len(images), "err", err)
+		return fmt.Errorf("failed to convert data: %w", err)
+	}
+	if len(images) == 0 {
+		return fmt.Errorf("no images were converted from the data")
+	}
+	slog.Info("converted images", "count", len(images), "dpi", p.Drv.DPI())
+	for _, img := range images {
+		if err := p.Drv.PrintImage(ctx, img); err != nil {
+			return fmt.Errorf("failed to print image: %w", err)
+		}
+	}
+
+	return nil
 }
 
-func (p *testPrinter) SetState(state PrinterState) {
+// convertWithMagick converts the given data, returning a list of converted
+// file paths, where each file path is a converted page of the document in PNG format.
+func convertWithMagick(ctx context.Context, dpi int, data []byte) ([]image.Image, error) {
+	cmd := exec.CommandContext(ctx, "magick", "-", "-density", strconv.Itoa(dpi), "-background", "white", "-alpha", "remove", "png:-")
+	cmd.Stdin = bytes.NewReader(data)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var images []image.Image
+	r := bytes.NewReader(out)
+	var eos bool // end of stream flag
+	for !eos {
+		slog.Info("decoding image from magick output")
+		img, err := png.Decode(r)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// End of the stream, no more images to decode
+				break
+			}
+			return images, fmt.Errorf("failed to decode image: %w", err)
+		}
+		images = append(images, img)
+		currPos, err := r.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return images, fmt.Errorf("failed to seek in output stream: %w", err)
+		}
+		if currPos >= int64(len(out)) {
+			eos = true // reached the end of the output stream
+		}
+	}
+
+	return images, nil
+}
+
+func (p *basePrinter) SetState(state PrinterState) {
 	p.state = state
 }

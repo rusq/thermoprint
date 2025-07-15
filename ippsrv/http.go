@@ -76,6 +76,19 @@ func (s *Server) Info(w io.Writer) {
 	fmt.Fprintf(w, "Server Address: %s\n", s.srv.Addr)
 	fmt.Fprintf(w, "Debug Mode: %t\n", Debug)
 	fmt.Fprintf(w, "Max Document Size: %d bytes\n", MaxDocumentSize)
+
+	fmt.Fprint(w, "Spool status:\n")
+	if jobs, err := s.is.spool.ListJobs(); err != nil {
+		if errors.Is(err, errJobNotFound) {
+			fmt.Fprint(w, "  No jobs found\n")
+		} else {
+			return
+		}
+	} else {
+		for _, job := range jobs {
+			fmt.Fprintf(w, "  - Job ID: %d, Printer: %s, Status: %s\n", job.ID, job.Printer.Name(), job.State)
+		}
+	}
 }
 
 func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
