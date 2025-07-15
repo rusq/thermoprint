@@ -74,7 +74,7 @@ func TestComposer_appendImageDither(t *testing.T) {
 				ditherFunc: tt.fields.ditherFunc,
 				ditherText: tt.fields.ditherText,
 			}
-			c.appendImageDither(tt.args.img, tt.args.dfn)
+			c.AppendImageDither(tt.args.img, tt.args.dfn)
 			assert.Equal(t, tt.wantImage, c.dst)
 		})
 	}

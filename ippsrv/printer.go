@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	_ "image/png" // Register PNG decoder
 	"io"
 	"log/slog"
 	"os/exec"
@@ -17,13 +16,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rusq/thermoprint"
+	"github.com/rusq/thermoprint/bitmap"
 )
 
 var startTime = time.Now()
 
 type basePrinter struct {
 	Fullname string
-	Id       string
+	ID       string
 	state    PrinterState // Printer state, e.g., idle, processing, stopped
 	Drv      Driver
 }
@@ -88,6 +88,9 @@ type Driver interface {
 	// DPI should return the printer's DPI (dots per inch) setting, which is
 	// used to determine the resolution of the printed output.
 	DPI() float64
+	// Width should return the width of the printer in pixels. This is used to
+	// determine the width of the printed output.
+	Width() int
 }
 
 func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
@@ -102,14 +105,14 @@ func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
 	}
 	return &basePrinter{
 		Fullname: fullname,
-		Id:       id,
+		ID:       id,
 		state:    PSIdle, // Set initial state to idle
 		Drv:      drv,
 	}, nil
 }
 
 func (p *basePrinter) Name() string {
-	return p.Id
+	return p.ID
 }
 
 func (p *basePrinter) MakeAndModel() string {
@@ -171,12 +174,13 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 	if len(data) == 0 {
 		return ErrEmptyData
 	}
+
 	// try decoding the data as an image
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err == nil {
+	if img, _, err := image.Decode(bytes.NewReader(data)); err == nil {
 		// fast path for images
 		return p.Drv.PrintImage(ctx, img)
 	}
+
 	// slow path for other data formats
 	// multiple formats can be supported, such as PostScript, PDF, etc.
 	images, err := convertWithMagick(ctx, int(p.Drv.DPI()), data)
@@ -185,15 +189,19 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 		return fmt.Errorf("failed to convert data: %w", err)
 	}
 	if len(images) == 0 {
-		return fmt.Errorf("no images were converted from the data")
+		return errors.New("no images were converted from the data")
 	}
-	slog.Info("converted images", "count", len(images), "dpi", p.Drv.DPI())
-	for _, img := range images {
-		if err := p.Drv.PrintImage(ctx, img); err != nil {
-			return fmt.Errorf("failed to print image: %w", err)
-		}
-	}
+	slog.Debug("converted source document", "pages", len(images), "dpi", p.Drv.DPI())
 
+	// combine all pages into a long image.
+	c := bitmap.NewComposer(p.Drv.Width(), bitmap.WithComposerDitherFunc(bitmap.DitherThresholdFn(128)))
+	for _, img := range images {
+		c.AppendImage(img)
+	}
+	// print the image.
+	if err := p.Drv.PrintImage(ctx, c.Image()); err != nil {
+		return fmt.Errorf("failed to print image: %w", err)
+	}
 	return nil
 }
 
@@ -206,6 +214,7 @@ func convertWithMagick(ctx context.Context, dpi int, data []byte) ([]image.Image
 	if err != nil {
 		return nil, err
 	}
+
 	var images []image.Image
 	r := bytes.NewReader(out)
 	var eos bool // end of stream flag
