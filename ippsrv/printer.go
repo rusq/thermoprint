@@ -194,9 +194,13 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 	slog.Debug("converted source document", "pages", len(images), "dpi", p.Drv.DPI())
 
 	// combine all pages into a long image.
-	c := bitmap.NewComposer(p.Drv.Width(), bitmap.WithComposerDitherFunc(bitmap.DitherThresholdFn(128)))
+	c := bitmap.NewComposer(p.Drv.Width(), bitmap.WithComposerDitherFunc(bitmap.DitherDefault))
 	for _, img := range images {
-		c.AppendImage(img)
+		if bitmap.IsDocument(img, 50, 200) {
+			c.AppendImageDither(img, bitmap.DitherThresholdFn(128))
+		} else {
+			c.AppendImage(img)
+		}
 	}
 	// print the image.
 	if err := p.Drv.PrintImage(ctx, c.Image()); err != nil {
