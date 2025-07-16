@@ -47,8 +47,19 @@ func locateDevice(ctx context.Context, adapter *bluetooth.Adapter, sp SearchPara
 	if sp.MACAddress == "" && sp.Name == "" {
 		return bluetooth.ScanResult{}, fmt.Errorf("cannot specify both MAC address and device name")
 	}
-	var d bluetooth.ScanResult
+	var (
+		d        bluetooth.ScanResult
+		canceled bool
+	)
 	err := adapter.Scan(func(a *bluetooth.Adapter, sr bluetooth.ScanResult) {
+		if ctx.Err() != nil {
+			slog.WarnContext(ctx, "Scan cancelled", "error", ctx.Err())
+			canceled = true
+			if err := a.StopScan(); err != nil {
+				slog.ErrorContext(ctx, "Failed to stop scanning", "error", err)
+			}
+			return
+		}
 		if sr.LocalName() == sp.Name || sr.Address.String() == sp.MACAddress {
 			slog.Info("Found printer", "name", sr.LocalName(), "address", sr.Address)
 			d = sr
@@ -60,6 +71,8 @@ func locateDevice(ctx context.Context, adapter *bluetooth.Adapter, sp SearchPara
 	})
 	if err != nil {
 		return d, fmt.Errorf("failed to start scanning: %w", err)
+	} else if canceled {
+		return d, fmt.Errorf("scanning was cancelled: %w", ctx.Err())
 	}
 	slog.DebugContext(ctx, "Scanning complete", "device", d.Address, "name", d.LocalName())
 	return d, nil

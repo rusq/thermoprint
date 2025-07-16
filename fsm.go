@@ -59,7 +59,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 
 	switch p.state {
 
-	case stateIdle:
+	case stateIdle, stateCompleted:
 		if evt == eventStart {
 			log.Info("Starting printer initialization")
 			p.state = stateInitializing
@@ -164,13 +164,6 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 			log.Info("Resuming print after hold", "packet", packet)
 			p.state = statePrinting
 			go p.printBuffer(packet)
-		}
-
-	case stateCompleted:
-		if evt == eventCancel {
-			// nothing
-		} else {
-			log.Info("Ignoring event, print job already completed")
 		}
 
 	case stateFailed:

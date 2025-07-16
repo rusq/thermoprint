@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
+	"github.com/pterm/pterm"
 	"tinygo.org/x/bluetooth"
 
 	"github.com/rusq/thermoprint"
@@ -44,6 +46,28 @@ const (
 
 	OmitAll = OmitConnectFlags | OmitCommonImageFlags
 )
+
+func init() {
+	enableLogColors(os.Getenv("NOCOLOR"))
+}
+
+func enableLogColors(strNocolor string) {
+	nocolor, err := strconv.ParseBool(strNocolor)
+	if err == nil && nocolor {
+		// skip enabling color
+		return
+	}
+	pterm.DefaultLogger.Writer = os.Stderr
+	handler := pterm.NewSlogHandler(&pterm.DefaultLogger)
+	sl := slog.New(handler)
+	Log = sl
+	slog.SetDefault(sl)
+}
+
+func SetDebugLevel() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	pterm.DefaultLogger.Level = pterm.LogLevelDebug
+}
 
 // SetBaseFlags sets base flags.
 func SetBaseFlags(fs *flag.FlagSet, mask FlagMask) {

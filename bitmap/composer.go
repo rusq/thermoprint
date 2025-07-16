@@ -18,7 +18,8 @@ import (
 	"github.com/rusq/thermoprint/fontmgr"
 )
 
-// Composer is a struct that allows appending images to a destination image.
+// Composer is an abstraction that allows composing the document from text and
+// images.
 type Composer struct {
 	dst *image.RGBA // destination image (canvas)
 	sp  image.Point // current image position
@@ -28,9 +29,12 @@ type Composer struct {
 	ditherText bool       // whether to dither text or not
 }
 
+// ComposerOption is a functional option for the [Composer].
 type ComposerOption func(*Composer)
 
-// WithComposerCrop sets the crop option for the Composer.
+// WithComposerCrop sets the crop parameter to the given value.  If crop is
+// enabled, and an image wider than the canvas width is being appended, it will
+// be cropped on the right margin, instead of rescaled.
 func WithComposerCrop(crop bool) ComposerOption {
 	return func(c *Composer) {
 		c.crop = crop
@@ -44,12 +48,14 @@ func WithComposerDitherFunc(dfn DitherFunc) ComposerOption {
 	}
 }
 
-func WithComposerDitherText(ditherText bool) ComposerOption {
+// WithComposerEnableTextDither enables dithering of text.
+func WithComposerEnableTextDither(ditherText bool) ComposerOption {
 	return func(c *Composer) {
 		c.ditherText = ditherText
 	}
 }
 
+// NewComposer initialises a new composer with a given canvas width.
 func NewComposer(width int, opt ...ComposerOption) *Composer {
 	img := image.NewRGBA(image.Rect(0, 0, width, 1))
 	return &Composer{
@@ -58,12 +64,14 @@ func NewComposer(width int, opt ...ComposerOption) *Composer {
 	}
 }
 
-// AppendImage appends an image without dithering.
+// AppendImage appends an image without dithering to the bottom of the canvas.
 func (c *Composer) AppendImage(img image.Image) {
-	c.appendImageDither(img, c.ditherFunc)
+	c.AppendImageDither(img, c.ditherFunc)
 }
 
-func (c *Composer) appendImageDither(img image.Image, dfn DitherFunc) {
+// AppendImageDither appends the image with a custom dither function at the
+// bottom of the image canvas.
+func (c *Composer) AppendImageDither(img image.Image, dfn DitherFunc) {
 	// c.sp contains the current position in the destination image
 	// we need to check if the img fits the c.dst at the current position
 	// and if not, we need to resize the destination image
@@ -92,15 +100,17 @@ func (c *Composer) appendImageDither(img image.Image, dfn DitherFunc) {
 	c.sp.X = 0                  // reset X position to the start of the line
 }
 
+// AppendText renders text at the bottom of the image, growing the underlying
+// image canvas if needed to fit the text lines.
 func (c *Composer) AppendText(face font.Face, text string) error {
 	img, err := RenderTTF(text, face, c.dst.Bounds().Dx())
 	if err != nil {
 		return err
 	}
 	if c.ditherText {
-		c.appendImageDither(img, c.ditherFunc)
+		c.AppendImageDither(img, c.ditherFunc)
 	} else {
-		c.appendImageDither(img, nil) // no dithering for text
+		c.AppendImageDither(img, nil) // no dithering for text
 	}
 	return nil
 }
@@ -110,7 +120,7 @@ func (c *Composer) Image() image.Image {
 	return c.dst
 }
 
-// Bounds returns the canvas rectangle.
+// Bounds returns the current canvas rectangle.
 func (c *Composer) Bounds() image.Rectangle {
 	return c.dst.Bounds()
 }
@@ -143,6 +153,8 @@ const (
 	alignRight
 )
 
+// Document is an abstraction that allows to manipulate composer with simple
+// text scripts.
 type Document struct {
 	c         *Composer
 	dpi       float64
@@ -152,6 +164,7 @@ type Document struct {
 	buf       bytes.Buffer
 }
 
+// NewDocument creates a new document over the composer.
 func NewDocument(c *Composer, dpi float64) *Document {
 	return &Document{
 		c:         c,
@@ -177,6 +190,7 @@ func (d *Document) flush() {
 	d.buf.Reset()
 }
 
+// Parse reads the script from reader and processes commands.
 func (d *Document) Parse(r io.Reader) error {
 	s := bufio.NewScanner(r)
 	for n := 1; s.Scan(); n++ {
@@ -300,6 +314,7 @@ func (d *Document) cmdFont(args ...string) error {
 	// unreachable
 }
 
+// Image returns the document image.
 func (d *Document) Image() image.Image {
 	d.flush()
 	return d.c.Image()

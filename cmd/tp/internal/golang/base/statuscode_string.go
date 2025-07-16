@@ -12,11 +12,12 @@ func _() {
 	_ = x[SGenericError-1]
 	_ = x[SHelpRequested-2]
 	_ = x[SInvalidParameters-3]
+	_ = x[SApplicationError-4]
 }
 
-const _StatusCode_name = "No ErrorGeneric ErrorHelp RequestedInvalid Parameters"
+const _StatusCode_name = "No ErrorGeneric ErrorHelp RequestedInvalid ParametersApplication Error"
 
-var _StatusCode_index = [...]uint8{0, 8, 21, 35, 53}
+var _StatusCode_index = [...]uint8{0, 8, 21, 35, 53, 70}
 
 func (i StatusCode) String() string {
 	if i >= StatusCode(len(_StatusCode_index)-1) {

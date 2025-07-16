@@ -58,7 +58,7 @@ func runCompose(ctx context.Context, cmd *base.Command, args []string) error {
 		prn.Width(),
 		bitmap.WithComposerCrop(cfg.Crop),
 		bitmap.WithComposerDitherFunc(dfn),
-		bitmap.WithComposerDitherText(ditherText),
+		bitmap.WithComposerEnableTextDither(ditherText),
 	)
 
 	doc := bitmap.NewDocument(c, prn.DPI())

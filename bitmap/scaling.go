@@ -20,12 +20,12 @@ func ResizeToFit(img image.Image, targetWidth int) image.Image {
 		// fill canvas with white
 		draw.Draw(resized, resized.Bounds(), image.White, image.Point{}, draw.Src)
 		// Copy the original image onto the resized canvas in left upper corner
-		draw.Copy(resized, image.Point{0, 0}, img, img.Bounds(), draw.Src, nil)
+		draw.Copy(resized, image.Point{0, 0}, img, img.Bounds(), draw.Over, nil)
 	} else {
 		// Resize the image to the target width while maintaining aspect ratio
 		targetHeight := (img.Bounds().Dy() * targetWidth) / img.Bounds().Dx()
 		resized = image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
-		draw.CatmullRom.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Over, nil)
+		draw.CatmullRom.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Src, nil)
 	}
 	return resized
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdcompose"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdimage"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdpattern"
+	"github.com/rusq/thermoprint/cmd/tp/internal/cmdserver"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cmdtext"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/help"
@@ -27,6 +28,7 @@ func init() {
 		cmdtext.CmdText,
 		cmdcompose.CmdCompose,
 		cmdpattern.CmdPattern,
+		cmdserver.CmdServer,
 	}
 }
 
@@ -116,6 +118,8 @@ func invoke(cmd *base.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	trapSigInfo()
+
 	ctx, task := trace.NewTask(ctx, "command")
 	defer task.End()
 
@@ -179,7 +183,7 @@ func initTrace(filename string) error {
 // function is nil.
 func initLog(filename string, jsonHandler bool, verbose bool) (*slog.Logger, error) {
 	if verbose {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
+		cfg.SetDebugLevel()
 	}
 	var opts = &slog.HandlerOptions{
 		Level: iftrue(verbose, slog.LevelDebug, slog.LevelInfo),
