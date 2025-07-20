@@ -1,2 +1,2 @@
-- IPP
-- abstract printer
+- IPP protocol revisit
+- reimplement printer FSM on looplab/fsm
