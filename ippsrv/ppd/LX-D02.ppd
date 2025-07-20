@@ -52,7 +52,7 @@
 
 *% Input Slots
 *OpenUI *InputSlot: PickOne
-*InputSlot Roll/Roll Feed: "<</MediaPosition 1>>setpagedevice>"
+*InputSlot Roll/Roll Feed: "<</MediaPosition 1>>setpagedevice"
 *CloseUI: *InputSlot
 *DefaultInputSlot: Roll
 
@@ -64,7 +64,7 @@
 
 *% Duplex Option (None)
 *OpenUI *Duplex: PickOne
-*Duplex None/Off: "<</Duplex false>>setpagedevice>"
+*Duplex None/Off: "<</Duplex false>>setpagedevice"
 *CloseUI: *Duplex
 
 *DefaultDuplex: None
