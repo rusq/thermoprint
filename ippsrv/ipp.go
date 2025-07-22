@@ -112,14 +112,14 @@ func (ih *basicIPPServer) printerAttributes(p Printer) *goipp.Message {
 	a("printer-state", goipp.TagEnum, goipp.Integer(p.State()))
 	a("printer-state-reasons", goipp.TagKeyword, ippNone)
 	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"))
-	a("ipp-operations-supported", goipp.TagEnum, goipp.Binary{
-		byte(goipp.OpPrintJob),
-		byte(goipp.OpValidateJob),
-		byte(goipp.OpCancelJob),
-		byte(goipp.OpGetJobs),
-		byte(goipp.OpGetJobAttributes),
-		byte(goipp.OpGetPrinterAttributes),
-	})
+	a("operations-supported", goipp.TagEnum,
+		goipp.Integer(goipp.OpPrintJob),
+		goipp.Integer(goipp.OpValidateJob),
+		goipp.Integer(goipp.OpCancelJob),
+		goipp.Integer(goipp.OpGetJobs),
+		goipp.Integer(goipp.OpGetJobAttributes),
+		goipp.Integer(goipp.OpGetPrinterAttributes),
+	)
 	a("multiple-document-jobs-supported", goipp.TagBoolean, goipp.Boolean(false))
 	a("charset-configured", goipp.TagCharset, ippUTF8)
 	a("charset-supported", goipp.TagCharset, ippUTF8)

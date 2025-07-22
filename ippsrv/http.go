@@ -8,21 +8,23 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/OpenPrinting/goipp"
-	"github.com/rusq/osenv/v2"
 )
 
 var MaxDocumentSize int64 = 104857600
-
-var Debug = osenv.Value("DEBUG", true)
 
 type Server struct {
 	pp  []Printer       // List of printers managed by the server
 	srv *http.Server    // HTTP server instance
 	is  *basicIPPServer // IPP server instance
+
+	debug   bool
+	dumpdir string
 }
 
 // https://datatracker.ietf.org/doc/html/rfc8011
@@ -38,19 +40,54 @@ const (
 // Option is the server option.
 type Option func(*Server)
 
-// New returns a new IPP server.
-func New(pp ...Printer) (*Server, error) {
-	if len(pp) == 0 {
-		return nil, errors.New("at least one printer must be provided")
+func WithDebug(b bool) Option {
+	return func(s *Server) {
+		s.debug = b
 	}
-	ippsrv, err := newBasicIPPServer("/printers/", pp...)
+}
+
+// WithDumpDir allows to set the directory for protocol dumps.
+// If not specified, a temporary directory will be used.
+func WithDumpDir(dir string) Option {
+	return func(s *Server) {
+		s.dumpdir = dir
+	}
+}
+
+func WithAdditionalPrinters(pp ...Printer) Option {
+	return func(s *Server) {
+		s.pp = append(s.pp, pp...)
+	}
+}
+
+// New returns a new IPP server.
+func New(p Printer, opts ...Option) (*Server, error) {
+	var s = &Server{
+		pp: []Printer{p},
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.debug {
+		if s.dumpdir != "" {
+			if err := os.MkdirAll(s.dumpdir, 700); err != nil {
+				return nil, fmt.Errorf("error creating requested dump directory: %w", err)
+			}
+		} else {
+			d, err := os.MkdirTemp("", "protodump-*")
+			if err != nil {
+				return nil, fmt.Errorf("error creating temporary dump directory: %w", err)
+			}
+			s.dumpdir = d
+		}
+		slog.Info("protocol dump", "directory", s.dumpdir)
+	}
+
+	ippsrv, err := newBasicIPPServer("/printers/", s.pp...)
 	if err != nil {
 		return nil, err
 	}
-	var s = &Server{
-		pp: pp,
-		is: ippsrv,
-	}
+	s.is = ippsrv
 
 	m := http.NewServeMux()
 	m.HandleFunc("/admin/", s.handleAdmin)
@@ -74,7 +111,7 @@ func (s *Server) Info(w io.Writer) {
 		fmt.Fprintf(w, "  - %s\n", name)
 	}
 	fmt.Fprintf(w, "Server Address: %s\n", s.srv.Addr)
-	fmt.Fprintf(w, "Debug Mode: %t\n", Debug)
+	fmt.Fprintf(w, "Debug Mode: %t\n", s.debug)
 	fmt.Fprintf(w, "Max Document Size: %d bytes\n", MaxDocumentSize)
 
 	fmt.Fprint(w, "Spool status:\n")
@@ -86,7 +123,8 @@ func (s *Server) Info(w io.Writer) {
 		}
 	} else {
 		for _, job := range jobs {
-			fmt.Fprintf(w, "  - Job ID: %d, Printer: %s, Status: %s\n", job.ID, job.Printer.Name(), job.State)
+			fmt.Fprintf(w, "  - Job ID: %d, Printer: %s, Status: %s\n", job.ID,
+				job.Printer.Name(), job.State)
 		}
 	}
 }
@@ -152,10 +190,16 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 	} else {
 		slog.Info("payload length", "length", len(payload))
 	}
-	{
+	if s.debug {
 		t := time.Now()
-		dumpIPPFile(fmt.Sprintf("protodump/print_request_%d_%04x.ipp", t.Unix(), msg.Code), &msg)
-		dumpfile(fmt.Sprintf("protodump/print_request_%d_%04x.json", t.Unix(), msg.Code), &msg)
+		dumpIPPFile(
+			filepath.Join(s.dumpdir, fmt.Sprintf("print_request_%d_%04x.ipp", t.Unix(), msg.Code)),
+			&msg,
+		)
+		dumpfile(
+			filepath.Join(s.dumpdir, fmt.Sprintf("print_request_%d_%04x.json", t.Unix(), msg.Code)),
+			&msg,
+		)
 	}
 	// Pass the control to the IPP server handler
 	w.Header().Set(hdrContentType, ippMIMEType)

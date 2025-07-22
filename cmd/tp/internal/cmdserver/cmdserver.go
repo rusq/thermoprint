@@ -44,7 +44,8 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 		base.SetExitStatus(base.SApplicationError)
 		return fmt.Errorf("failed to wrap printer: %w", err)
 	}
-	s, err := ippsrv.New(ippPrn)
+	var opts = []ippsrv.Option{ippsrv.WithDebug(cfg.Verbose)}
+	s, err := ippsrv.New(ippPrn, opts...)
 	if err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return err
