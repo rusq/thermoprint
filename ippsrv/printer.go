@@ -181,6 +181,9 @@ var (
 	ErrNoDriver = errors.New("no driver set for printer")
 	// ErrEmptyData is returned when the data to print is empty.
 	ErrEmptyData = errors.New("data cannot be empty")
+	// ErrNoImages is returned when the data could not be converted to any
+	// images.
+	ErrNoImages = errors.New("no images were converted from the data")
 )
 
 func (p *basePrinter) Print(ctx context.Context, data []byte) error {
@@ -205,7 +208,7 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 		return fmt.Errorf("failed to convert data: %w", err)
 	}
 	if len(images) == 0 {
-		return errors.New("no images were converted from the data")
+		return ErrNoImages
 	}
 	slog.Debug("converted source document", "pages", len(images), "dpi", p.Drv.DPI())
 

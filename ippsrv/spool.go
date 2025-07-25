@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -18,6 +19,8 @@ type spooler interface {
 	AddJob(ctx context.Context, job *Job, data []byte) error
 	RemoveJob(jobID JobID) error
 	GetJob(jobID JobID) (*Job, error)
+	// GetJobs returns all jobs for a specific printer by its ID.
+	GetJobs(prnID string) ([]*Job, error) // code 10
 	GetJobData(jobID JobID) ([]byte, error)
 	GetJobCount(prnID string) int
 	ListJobs() ([]*Job, error)
@@ -88,7 +91,13 @@ func (s *spool) worker() {
 			_ = msg // Process the message if needed
 		case <-ticker.C:
 			s.mu.Lock()
-			slog.Info("spool worker running", "job_count", len(s.jobs))
+			activeJobCount := 0
+			for _, job := range s.jobs {
+				if job.IsActive() {
+					activeJobCount++
+				}
+			}
+			slog.Info("spool worker running", "job_count", activeJobCount)
 			s.pruneLocked()
 			s.mu.Unlock()
 		}
@@ -100,9 +109,10 @@ var (
 	errJobNotFound      = errors.New("job not found")
 )
 
+
 func (s *spool) pruneLocked() {
 	for jobID, job := range s.jobs {
-		if time.Since(job.Created) > jobRetention && (job.State == JobAborted || job.State == JobCompleted || job.State == JobCancelled) {
+		if time.Since(job.Created) > jobRetention && job.IsCompleted() {
 			slog.Info("removing old job", "job_id", jobID, "created_at", job.Created)
 			if err := s.removeJobLocked(jobID); err != nil {
 				slog.Error("failed to remove old job", "job_id", jobID, "error", err)
@@ -118,10 +128,8 @@ func (s *spool) addJobLocked(job *Job) error {
 
 	s.jobs[job.ID] = job
 	pjobs := s.printerJobs[job.Printer.Name()]
-	for _, existingJobID := range pjobs {
-		if existingJobID == job.ID {
-			return fmt.Errorf("job %d already exists for printer %s", job.ID, job.Printer.Name())
-		}
+	if slices.Contains(pjobs, job.ID) {
+		return fmt.Errorf("job %d already exists for printer %s", job.ID, job.Printer.Name())
 	}
 	// Add the job ID to the printer's job list
 	if s.printerJobs[job.Printer.Name()] == nil {
@@ -253,4 +261,27 @@ func (s *spool) GetJobCount(prnID string) int {
 		return len(jobs)
 	}
 	return 0
+}
+
+func (s *spool) GetJobs(prnID string) ([]*Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	jobIDs, ok := s.printerJobs[prnID]
+	if !ok {
+		return nil, fmt.Errorf("no jobs found for printer %s", prnID)
+	}
+
+	jobs := make([]*Job, 0, len(jobIDs))
+	for _, jobID := range jobIDs {
+		job, ok := s.jobs[jobID]
+		if !ok {
+			continue // Skip if the job is not found
+		}
+		jobs = append(jobs, job)
+	}
+	if len(jobs) == 0 {
+		return nil, errJobNotFound
+	}
+	return jobs, nil
 }

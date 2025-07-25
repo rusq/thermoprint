@@ -1,2 +1,6 @@
 - IPP protocol revisit
 - reimplement printer FSM on looplab/fsm
+- requests:
+	- 11 - get printer attributes
+	- 2 -  print
+	- 10 - get jobs
