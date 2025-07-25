@@ -6,11 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/png"
-	"io"
 	"log/slog"
-	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +22,7 @@ type basePrinter struct {
 	ID       string
 	state    PrinterState // Printer state, e.g., idle, processing, stopped
 	Drv      Driver
+	Filter   Filter
 }
 
 type PrinterInformer interface {
@@ -93,7 +90,19 @@ type Driver interface {
 	Width() int
 }
 
-func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
+type PrinterOption func(*basePrinter) error
+
+func WithFilter(f Filter) PrinterOption {
+	return func(p *basePrinter) error {
+		if f == nil {
+			return errors.New("filter cannot be nil")
+		}
+		p.Filter = f
+		return nil
+	}
+}
+
+func WrapDriver(drv Driver, id, fullname string, opt ...PrinterOption) (Printer, error) {
 	if drv == nil {
 		return nil, errors.New("driver cannot be nil")
 	}
@@ -103,12 +112,19 @@ func WrapDriver(drv Driver, id, fullname string) (Printer, error) {
 	if id == "" {
 		return nil, errors.New("printer ID cannot be empty")
 	}
-	return &basePrinter{
+	p := &basePrinter{
 		Fullname: fullname,
 		ID:       id,
 		state:    PSIdle, // Set initial state to idle
 		Drv:      drv,
-	}, nil
+		Filter:   &imageMagickFilter{}, // Default filter, can be overridden
+	}
+	for _, o := range opt {
+		if err := o(p); err != nil {
+			return nil, fmt.Errorf("failed to apply printer option: %w", err)
+		}
+	}
+	return p, nil
 }
 
 func (p *basePrinter) Name() string {
@@ -165,6 +181,9 @@ var (
 	ErrNoDriver = errors.New("no driver set for printer")
 	// ErrEmptyData is returned when the data to print is empty.
 	ErrEmptyData = errors.New("data cannot be empty")
+	// ErrNoImages is returned when the data could not be converted to any
+	// images.
+	ErrNoImages = errors.New("no images were converted from the data")
 )
 
 func (p *basePrinter) Print(ctx context.Context, data []byte) error {
@@ -183,13 +202,13 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 
 	// slow path for other data formats
 	// multiple formats can be supported, such as PostScript, PDF, etc.
-	images, err := convertWithMagick(ctx, int(p.Drv.DPI()), data)
+	images, err := p.Filter.ToRaster(ctx, int(p.Drv.DPI()), data)
 	if err != nil {
 		slog.Error("images", "len", len(images), "err", err)
 		return fmt.Errorf("failed to convert data: %w", err)
 	}
 	if len(images) == 0 {
-		return errors.New("no images were converted from the data")
+		return ErrNoImages
 	}
 	slog.Debug("converted source document", "pages", len(images), "dpi", p.Drv.DPI())
 
@@ -207,42 +226,6 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 		return fmt.Errorf("failed to print image: %w", err)
 	}
 	return nil
-}
-
-// convertWithMagick converts the given data, returning a list of converted
-// file paths, where each file path is a converted page of the document in PNG format.
-func convertWithMagick(ctx context.Context, dpi int, data []byte) ([]image.Image, error) {
-	cmd := exec.CommandContext(ctx, "magick", "-", "-density", strconv.Itoa(dpi), "-background", "white", "-alpha", "remove", "png:-")
-	cmd.Stdin = bytes.NewReader(data)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	var images []image.Image
-	r := bytes.NewReader(out)
-	var eos bool // end of stream flag
-	for !eos {
-		slog.Info("decoding image from magick output")
-		img, err := png.Decode(r)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				// End of the stream, no more images to decode
-				break
-			}
-			return images, fmt.Errorf("failed to decode image: %w", err)
-		}
-		images = append(images, img)
-		currPos, err := r.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return images, fmt.Errorf("failed to seek in output stream: %w", err)
-		}
-		if currPos >= int64(len(out)) {
-			eos = true // reached the end of the output stream
-		}
-	}
-
-	return images, nil
 }
 
 func (p *basePrinter) SetState(state PrinterState) {

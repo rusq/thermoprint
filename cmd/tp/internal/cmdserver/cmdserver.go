@@ -23,10 +23,20 @@ This is a sample command to get you started.
 `,
 }
 
-var addr string
+var (
+	addr         string
+	protoDumpDir string
+)
 
 func init() {
-	CmdServer.Flag.StringVar(&addr, "addr", "localhost:6310", "custom flag is different than the global flags")
+	CmdServer.Flag.StringVar(&addr,
+		"addr",
+		"localhost:6310",
+		"custom flag is different than the global flags")
+	CmdServer.Flag.StringVar(&protoDumpDir,
+		"dumpdir",
+		"",
+		"directory for protocol dumps; if not specified, a temporary directory will be used")
 }
 
 func runServer(ctx context.Context, cmd *base.Command, args []string) error {
@@ -44,7 +54,11 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 		base.SetExitStatus(base.SApplicationError)
 		return fmt.Errorf("failed to wrap printer: %w", err)
 	}
-	s, err := ippsrv.New(ippPrn)
+	var opts = []ippsrv.Option{
+		ippsrv.WithDebug(cfg.Verbose),
+		ippsrv.WithDumpDir(protoDumpDir),
+	}
+	s, err := ippsrv.New(ippPrn, opts...)
 	if err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return err

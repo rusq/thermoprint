@@ -83,13 +83,13 @@ func (ih *basicIPPServer) ServeIPP(ctx context.Context, req *goipp.Message, body
 	lg := slog.With("code", req.Code, "request_id", req.RequestID)
 	lg.Info("ipp request received")
 	var handlers = map[goipp.Op]IPPHandlerFunc{
+		goipp.OpPrintJob:             ih.handlePrintJob,
+		goipp.OpValidateJob:          ih.handleWithBaseResponse,
+		goipp.OpGetJobAttributes:     ih.handleGetJobAttributes,
+		goipp.OpGetJobs:              ih.handleGetJobs,
 		goipp.OpGetPrinterAttributes: ih.handleGetPrinterAttributes,
 		goipp.OpCupsGetPrinters:      ih.handleGetPrinterAttributes,
 		goipp.OpCupsGetDefault:       ih.handleGetPrinterAttributes,
-		goipp.OpValidateJob:          ih.handleWithBaseResponse,
-		goipp.OpGetJobs:              ih.handleWithBaseResponse,
-		goipp.OpGetJobAttributes:     ih.handleGetJobAttributes,
-		goipp.OpPrintJob:             ih.handlePrintJob,
 	}
 	next, ok := handlers[goipp.Op(req.Code)]
 	if !ok || next == nil {
@@ -112,14 +112,14 @@ func (ih *basicIPPServer) printerAttributes(p Printer) *goipp.Message {
 	a("printer-state", goipp.TagEnum, goipp.Integer(p.State()))
 	a("printer-state-reasons", goipp.TagKeyword, ippNone)
 	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"))
-	a("ipp-operations-supported", goipp.TagEnum, goipp.Binary{
-		byte(goipp.OpPrintJob),
-		byte(goipp.OpValidateJob),
-		byte(goipp.OpCancelJob),
-		byte(goipp.OpGetJobs),
-		byte(goipp.OpGetJobAttributes),
-		byte(goipp.OpGetPrinterAttributes),
-	})
+	a("operations-supported", goipp.TagEnum,
+		goipp.Integer(goipp.OpPrintJob),
+		goipp.Integer(goipp.OpValidateJob),
+		goipp.Integer(goipp.OpCancelJob),
+		goipp.Integer(goipp.OpGetJobs),
+		goipp.Integer(goipp.OpGetJobAttributes),
+		goipp.Integer(goipp.OpGetPrinterAttributes),
+	)
 	a("multiple-document-jobs-supported", goipp.TagBoolean, goipp.Boolean(false))
 	a("charset-configured", goipp.TagCharset, ippUTF8)
 	a("charset-supported", goipp.TagCharset, ippUTF8)
@@ -219,4 +219,64 @@ func (ih *basicIPPServer) handlePrintJob(ctx context.Context, req *goipp.Message
 		return nil, fmt.Errorf("failed to add job to spool: %w", err)
 	}
 	return baseResponse(scSuccessful), nil
+}
+
+func asString(vv goipp.Values, ok bool) (string, bool) {
+	if !ok {
+		return "", false
+	}
+	if len(vv) == 0 {
+		return "", false
+	}
+	v := vv[0].V
+	if v.Type() != goipp.TypeString {
+		return "", false
+	}
+	return v.String(), true
+}
+
+func (ih *basicIPPServer) handleGetJobs(ctx context.Context, req *goipp.Message, _ []byte) (*goipp.Message, error) {
+	// request attributes:
+	// - attributes-charset (charset)
+	// - attributes-natural-language (naturalLanguage)
+	// - printer-uri (uri)
+	// - requesting-user-name SHOULD name(MAX)
+	// - limit MAY integer(1:MAX)
+	// - requested-attributes MAY 1setOf type2 keyword
+	// - which-jobs MAY type2 keyword
+	// - my-jobs MAY boolean
+	// response attributes:
+	// - attributes-charset (charset)
+	// - attributes-natural-language (naturalLanguage)
+	//
+	p, err := ih.printerFromRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get printer: %w", err)
+	}
+	lg := slog.With("printer", p.Name(), "code", req.Code, "request_id", req.RequestID)
+	username, _ := asString(findAttr(req.Operation, "requesting-user-name"))
+	if username != "" {
+		lg = lg.With("username", username)
+	}
+
+	// Get the requested attributes
+	attrs, ok := findAttr(req.Operation, "requested-attributes")
+	lg.Debug("requested attributes", "ok", ok, "attrs", attrs)
+
+	jobs, err := ih.spool.GetJobs(p.Name())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get jobs for printer %q: %w", p.Name(), err)
+	}
+
+	resp := baseResponse(scSuccessful)
+
+	for _, job := range jobs {
+		if username != "" && job.Username != username {
+			continue // Skip jobs not owned by the requesting user
+		}
+		attrs := job.attributes()
+		resp.Operation = append(resp.Operation, attrs...)
+	}
+
+	return resp, nil
 }

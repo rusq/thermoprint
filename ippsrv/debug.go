@@ -39,9 +39,6 @@ func serve(conn net.Conn) error {
 }
 
 func dumpfile(filename string, a any) {
-	if !Debug {
-		return
-	}
 	f, err := os.Create(filename)
 	if err != nil {
 		slog.Error("dumpfile", "err", err, "filename", filename)
@@ -52,9 +49,6 @@ func dumpfile(filename string, a any) {
 }
 
 func dumpIPPFile(filename string, msg *goipp.Message) {
-	if !Debug {
-		return
-	}
 	f, err := os.Create(filename)
 	if err != nil {
 		slog.Error("dumpIPPFile", "err", err, "filename", filename)
@@ -65,9 +59,6 @@ func dumpIPPFile(filename string, msg *goipp.Message) {
 }
 
 func dumpIPP(w io.Writer, msg *goipp.Message) {
-	if !Debug {
-		return
-	}
 	fm := goipp.NewFormatter()
 	fm.FmtRequest(msg)
 	if _, err := fm.WriteTo(w); err != nil {

@@ -32,6 +32,7 @@ func TestRaster_Rasterise(t *testing.T) {
 			want: [][]byte{
 				append(append(append([]byte{0x55, 0x00, 0x00}, bytes.Repeat([]byte{0b01010101}, 48)...), bytes.Repeat([]byte{0b10101010}, 48)...), 0x00),
 				append(append(append([]byte{0x55, 0x00, 0x01}, bytes.Repeat([]byte{0b01010101}, 48)...), bytes.Repeat([]byte{0b10101010}, 48)...), 0x00),
+				append(append([]byte{0x55, 0x00, 0x02}, bytes.Repeat([]byte{00}, 48*2)...), 0x00),
 			},
 			wantErr: false,
 		},

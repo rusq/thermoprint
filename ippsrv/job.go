@@ -346,3 +346,11 @@ func (j *Job) attributes() goipp.Attributes {
 func (j *Job) reasons() []goipp.Value {
 	return stringsToValues(j.StateReasons)
 }
+
+func (j *Job) IsCompleted() bool {
+	return j.State == JobCompleted || j.State == JobCancelled || j.State == JobAborted
+}
+
+func (j *Job) IsActive() bool {
+	return !j.IsCompleted() && j.State != JobPending
+}
