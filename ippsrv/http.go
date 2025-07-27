@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/OpenPrinting/goipp"
+	"github.com/rusq/httpex"
 )
 
 var MaxDocumentSize int64 = 104857600
@@ -70,7 +72,7 @@ func New(p Printer, opts ...Option) (*Server, error) {
 	}
 	if s.debug {
 		if s.dumpdir != "" {
-			if err := os.MkdirAll(s.dumpdir, 700); err != nil {
+			if err := os.MkdirAll(s.dumpdir, 0700); err != nil {
 				return nil, fmt.Errorf("error creating requested dump directory: %w", err)
 			}
 		} else {
@@ -95,7 +97,7 @@ func New(p Printer, opts ...Option) (*Server, error) {
 	m.HandleFunc("POST /printers/{name}/{job}", s.handleJob)
 	m.HandleFunc("/", s.handlePrint)
 	srv := &http.Server{
-		Handler: m,
+		Handler: httpex.LogMiddleware(m, log.Default()),
 	}
 	s.srv = srv
 

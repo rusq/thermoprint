@@ -97,7 +97,9 @@ func (s *spool) worker() {
 					activeJobCount++
 				}
 			}
-			slog.Info("spool worker running", "job_count", activeJobCount)
+			if activeJobCount > 0 {
+				slog.Info("spool worker running", "job_count", activeJobCount)
+			}
 			s.pruneLocked()
 			s.mu.Unlock()
 		}
@@ -108,7 +110,6 @@ var (
 	errJobAlreadyExists = errors.New("job already exists")
 	errJobNotFound      = errors.New("job not found")
 )
-
 
 func (s *spool) pruneLocked() {
 	for jobID, job := range s.jobs {
