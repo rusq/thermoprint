@@ -27,9 +27,10 @@
 *PageSize Label58x40mm/58mm x 40mm Label WB/Ozon: "<</PageSize [384 320]>>setpagedevice"
 *PageSize Label58x32mm/58mm x 32mm Label: "<</PageSize [384 256]>>setpagedevice"
 *PageSize Label58x60mm/58mm x 60mm Label: "<</PageSize [384 480]>>setpagedevice"
+*PageSize Label58x100mm/58mm x 100mm Label: "<</PageSize [384 800]>>setpagedevice"
 *CloseUI: *PageSize
 
-*DefaultPageSize: Label58x60mm
+*DefaultPageSize: Label58x100mm
 
 *ImageableArea Label58x40mm: "0 0 384 320"
 *PaperDimension Label58x40mm: "384 320"
@@ -40,11 +41,14 @@
 *ImageableArea Label58x60mm: "0 0 384 480"
 *PaperDimension Label58x60mm: "384 480"
 *PageRegion Label58x60mm: "0 0 384 480"
+*ImageableArea Label58x100mm: "0 0 384 800"
+*PaperDimension Label58x100mm: "384 800"
+*PageRegion Label58x100mm: "0 0 384 800"
 
 
-*DefaultImageableArea: Label58x40mm
-*DefaultPaperDimension: Label58x40mm
-*DefaultPageRegion: Label58x40mm
+*DefaultImageableArea: Label58x100mm
+*DefaultPaperDimension: Label58x100mm
+*DefaultPageRegion: Label58x100mm
 
 *% Fixed Resolution
 *DefaultResolution: 203dpi
