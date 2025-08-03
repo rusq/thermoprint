@@ -21,6 +21,7 @@ type basicIPPServer struct {
 	baseURL string
 	Printer map[string]Printer
 	spool   spooler // Spooler for managing print jobs
+	mdns    *mdnsSvc
 }
 
 type IPPHandler interface {
@@ -60,11 +61,16 @@ func newBasicIPPServer(baseURL string, pp ...Printer) (*basicIPPServer, error) {
 		p.SetState(PSIdle) // Set initial state to idle
 		printers[p.Name()] = p
 	}
+	mdns, err := newMDSN(pp[0], "localhost", 6031)
+	if err != nil {
+		return nil, err
+	}
 
 	return &basicIPPServer{
 		baseURL: baseURL,
 		Printer: printers, //TODO
 		spool:   spool,
+		mdns:    mdns,
 	}, nil
 }
 
@@ -75,6 +81,7 @@ func (ih *basicIPPServer) Shutdown(ctx context.Context) error {
 			return nil
 		}
 	}
+	ih.mdns.Shutdown()
 	slog.Info("IPP server shut down successfully")
 	return nil
 }
@@ -111,7 +118,7 @@ func (ih *basicIPPServer) printerAttributes(p Printer) *goipp.Message {
 	a("printer-make-and-model", goipp.TagText, goipp.String(p.MakeAndModel()))
 	a("printer-state", goipp.TagEnum, goipp.Integer(p.State()))
 	a("printer-state-reasons", goipp.TagKeyword, ippNone)
-	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"))
+	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"), goipp.String("2.0"))
 	a("operations-supported", goipp.TagEnum,
 		goipp.Integer(goipp.OpPrintJob),
 		goipp.Integer(goipp.OpValidateJob),
@@ -126,7 +133,7 @@ func (ih *basicIPPServer) printerAttributes(p Printer) *goipp.Message {
 	a("natural-language-configured", goipp.TagLanguage, ippENUS)
 	a("generated-natural-language-supported", goipp.TagLanguage, ippENUS)
 	a("document-format-default", goipp.TagMimeType, ippApplicationPDF)
-	a("document-format-supported", goipp.TagMimeType, ippApplicationPDF)
+	a("document-format-supported", goipp.TagMimeType, ippApplicationPDF, ippImageURF)
 	a("printer-is-accepting-jobs", goipp.TagBoolean, goipp.Boolean(p.Ready()))
 	a("queued-job-count", goipp.TagInteger, goipp.Integer(ih.spool.GetJobCount(p.Name()))) // TODO: interrogate spooler for queued jobs for this printer
 	a("pdl-override-supported", goipp.TagKeyword, goipp.String("not-attempted"))

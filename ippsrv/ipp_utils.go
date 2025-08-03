@@ -13,6 +13,7 @@ const (
 	ippUTF8           goipp.String = "utf-8"
 	ippENUS           goipp.String = "en-us"
 	ippApplicationPDF goipp.String = "application/pdf"
+	ippImageURF       goipp.String = "image/urf"
 )
 
 // adder is a helper function to add attributes to an operation.
