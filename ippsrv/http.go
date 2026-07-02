@@ -207,7 +207,7 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(hdrContentType, ippMIMEType)
 	resp, err := s.is.ServeIPP(r.Context(), &msg, payload)
 	if err != nil {
-		baseResponse(scServerError).Encode(w)
+		baseResponse(scServerError, msg.RequestID).Encode(w)
 		slog.Error("failed to handle print request", "error", err)
 		return
 	}

@@ -16,7 +16,7 @@ const (
 )
 
 // adder is a helper function to add attributes to an operation.
-func adder(op goipp.Attributes) func(s string, tag goipp.Tag, values ...goipp.Value) {
+func adder(op *goipp.Attributes) func(s string, tag goipp.Tag, values ...goipp.Value) {
 	return func(name string, tag goipp.Tag, values ...goipp.Value) {
 		if len(values) == 0 {
 			values = []goipp.Value{goipp.String("")}
@@ -51,13 +51,12 @@ const (
 )
 
 const (
-	codeOK     = 0
-	requestNum = 1
+	codeOK = 0
 )
 
-func baseResponse(s statusCode) *goipp.Message {
-	m := goipp.NewRequest(goipp.DefaultVersion, codeOK, requestNum)
-	a := adder(m.Operation)
+func baseResponse(s statusCode, requestID uint32) *goipp.Message {
+	m := goipp.NewResponse(goipp.DefaultVersion, codeOK, requestID)
+	a := adder(&m.Operation)
 	a("attributes-charset", goipp.TagCharset, ippUTF8)
 	a("attributes-natural-language", goipp.TagLanguage, ippENUS)
 	a("status-code", goipp.TagKeyword, goipp.String(s))

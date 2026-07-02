@@ -327,8 +327,8 @@ func (j *Job) attributes() goipp.Attributes {
 		return goipp.Integer(int32(t.Unix()))
 	}
 
-	b := baseResponse(scSuccessful)
-	a := adder(b.Operation)
+	attrs := goipp.Attributes{}
+	a := adder(&attrs)
 	a("job-id", goipp.TagInteger, goipp.Integer(j.ID))
 	a("job-name", goipp.TagName, goipp.String(j.Name))
 	a("job-uri", goipp.TagURI, goipp.String(j.JobURI))
@@ -340,7 +340,7 @@ func (j *Job) attributes() goipp.Attributes {
 	a("time-at-processing", goipp.TagDateTime, nulltime(j.Processing))
 	a("time-at-completed", goipp.TagDateTime, nulltime(j.Completed))              // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.3
 	a("job-printer-up-time", goipp.TagInteger, goipp.Integer(j.Printer.UpTime())) // https: //datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.4
-	return b.Operation
+	return attrs
 }
 
 func (j *Job) reasons() []goipp.Value {
