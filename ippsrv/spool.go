@@ -206,12 +206,6 @@ func (s *spool) RemoveJob(jobID JobID) error {
 	if err := s.removeJobLocked(jobID); err != nil {
 		return fmt.Errorf("failed to remove job %d: %w", jobID, err)
 	}
-	// Remove the job file from the spool directory
-
-	jobFile := s.jobFilePath(jobID)
-	if err := os.Remove(s.jobFilePath(jobID)); err != nil {
-		return fmt.Errorf("failed to remove job file %s: %w", jobFile, err)
-	}
 	return nil
 }
 
