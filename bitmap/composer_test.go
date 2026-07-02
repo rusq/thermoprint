@@ -5,8 +5,50 @@ import (
 	"image/color"
 	"testing"
 
+	"github.com/rusq/thermoprint/fontmgr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestNewComposer_appliesOptions(t *testing.T) {
+	t.Run("crop", func(t *testing.T) {
+		c := NewComposer(2, WithComposerCrop(true))
+		c.AppendImage(testColorImage(image.Rect(0, 0, 4, 4), color.White))
+
+		assert.Equal(t, image.Rect(0, 0, 2, 4), c.Bounds())
+	})
+
+	t.Run("image dither", func(t *testing.T) {
+		var calls int
+		dfn := func(img image.Image, gamma float64) image.Image {
+			calls++
+			return img
+		}
+		c := NewComposer(2, WithComposerDitherFunc(dfn))
+
+		c.AppendImage(testColorImage(image.Rect(0, 0, 2, 2), color.White))
+
+		assert.Equal(t, 1, calls)
+	})
+
+	t.Run("text dither", func(t *testing.T) {
+		var calls int
+		dfn := func(img image.Image, gamma float64) image.Image {
+			calls++
+			return img
+		}
+		c := NewComposer(
+			64,
+			WithComposerDitherFunc(dfn),
+			WithComposerEnableTextDither(true),
+		)
+
+		err := c.AppendText(fontmgr.DefaultFont, "hello")
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, calls)
+	})
+}
 
 func TestComposer_appendImageDither(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 2, 2))

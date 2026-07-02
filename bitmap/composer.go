@@ -58,10 +58,14 @@ func WithComposerEnableTextDither(ditherText bool) ComposerOption {
 // NewComposer initialises a new composer with a given canvas width.
 func NewComposer(width int, opt ...ComposerOption) *Composer {
 	img := image.NewRGBA(image.Rect(0, 0, width, 1))
-	return &Composer{
+	c := &Composer{
 		dst: img,
 		sp:  image.Point{},
 	}
+	for _, o := range opt {
+		o(c)
+	}
+	return c
 }
 
 // AppendImage appends an image without dithering to the bottom of the canvas.
