@@ -21,11 +21,9 @@ func PixelBit(img image.Image, x, y int, threshold uint8) bool {
 	if threshold == 0 {
 		threshold = DefaultThreshold // default threshold for dark pixels
 	}
-	if y >= img.Bounds().Dy() {
-		return false // padded line
-	}
-	if x >= img.Bounds().Dx() {
-		return false // image narrower than 384px
+	bounds := img.Bounds()
+	if !image.Pt(x, y).In(bounds) {
+		return false
 	}
 
 	c := img.At(x, y)

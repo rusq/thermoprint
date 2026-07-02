@@ -2,9 +2,7 @@ package bitmap
 
 import (
 	"image"
-	_ "image/jpeg"
-	"image/png"
-	"os"
+	"image/color"
 	"testing"
 )
 
@@ -12,59 +10,55 @@ func resizeAndDither(img image.Image, targetWidth int, ditherFn DitherFunc) imag
 	return ditherFn(ResizeToFit(img, targetWidth), DefaultGamma)
 }
 
-func openImage(t *testing.T, filename string) image.Image {
-	t.Helper()
-	file, err := os.Open(filename)
-	if err != nil {
-		t.Fatalf("failed to open image file %s: %v", filename, err)
-	}
-	defer file.Close()
-
-	img, _, err := image.Decode(file)
-	if err != nil {
-		t.Fatalf("failed to decode image file %s: %v", filename, err)
-	}
-	return img
-}
-
-func saveImage(t *testing.T, img image.Image, filename string) {
-	t.Helper()
-	file, err := os.Create(filename)
-	if err != nil {
-		t.Fatalf("failed to create image file %s: %v", filename, err)
-	}
-	defer file.Close()
-
-	if err := png.Encode(file, img); err != nil {
-		t.Fatalf("failed to encode image to file %s: %v", filename, err)
-	}
-}
-
 func Test_resizeAndDither(t *testing.T) {
 	type args struct {
-		// img         image.Image
 		targetWidth int
 		ditherFn    DitherFunc
 	}
 	tests := []struct {
-		name   string
-		input  string
-		args   args
-		output string
+		name       string
+		input      image.Image
+		args       args
+		wantBounds image.Rectangle
 	}{
 		{
-			name:   "Resize and dither",
-			input:  "../media/harold.jpg",
-			args:   args{targetWidth: 384, ditherFn: DStucki},
-			output: "../media/harold_out.png",
+			name:       "Resize and dither",
+			input:      makeGradient(96, 24),
+			args:       args{targetWidth: 384, ditherFn: DStucki},
+			wantBounds: image.Rect(0, 0, 384, 24),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := resizeAndDither(openImage(t, tt.input), tt.args.targetWidth, tt.args.ditherFn)
-			saveImage(t, out, tt.output)
+			out := resizeAndDither(tt.input, tt.args.targetWidth, tt.args.ditherFn)
+			if got := out.Bounds(); got != tt.wantBounds {
+				t.Fatalf("resizeAndDither bounds = %v, want %v", got, tt.wantBounds)
+			}
+			assertBlackWhite(t, out)
 		})
 	}
 }
 
+func makeGradient(width, height int) image.Image {
+	img := image.NewGray(image.Rect(0, 0, width, height))
+	for y := range height {
+		for x := range width {
+			v := uint8(x * 255 / (width - 1))
+			img.SetGray(x, y, color.Gray{Y: v})
+		}
+	}
+	return img
+}
 
+func assertBlackWhite(t *testing.T, img image.Image) {
+	t.Helper()
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			gray := ColorToGray(img.At(x, y))
+			if gray != 0 && gray != 255 {
+				t.Fatalf("pixel at (%d,%d) = %d, want black or white", x, y, gray)
+			}
+		}
+	}
+}
