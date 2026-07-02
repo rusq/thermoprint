@@ -50,9 +50,33 @@ func newIPPRequest(op goipp.Op, requestID uint32) *goipp.Message {
 }
 
 func TestBaseResponseUsesRequestID(t *testing.T) {
-	resp := baseResponse(scSuccessful, testRequestID)
+	resp := baseResponse(goipp.StatusOk, testRequestID)
 	if resp.RequestID != testRequestID {
 		t.Fatalf("RequestID = %d, want %d", resp.RequestID, testRequestID)
+	}
+}
+
+func TestBaseResponseUsesStatusCode(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status goipp.Status
+	}{
+		{name: "ok", status: goipp.StatusOk},
+		{name: "internal error", status: goipp.StatusErrorInternal},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := baseResponse(tt.status, testRequestID)
+			if resp.Code != goipp.Code(tt.status) {
+				t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(tt.status))
+			}
+		})
+	}
+}
+
+func TestBaseResponseDoesNotAddStatusCodeAttribute(t *testing.T) {
+	resp := baseResponse(goipp.StatusOk, testRequestID)
+	if _, ok := findAttr(resp.Operation, "status-code"); ok {
+		t.Fatal("baseResponse added status-code operation attribute")
 	}
 }
 
@@ -67,6 +91,9 @@ func TestHandleWithBaseResponseEchoesRequestID(t *testing.T) {
 	if resp.RequestID != req.RequestID {
 		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
 	}
+	if resp.Code != goipp.Code(goipp.StatusOk) {
+		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
+	}
 }
 
 func TestHandleGetPrinterAttributesEchoesRequestID(t *testing.T) {
@@ -79,6 +106,9 @@ func TestHandleGetPrinterAttributesEchoesRequestID(t *testing.T) {
 	}
 	if resp.RequestID != req.RequestID {
 		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
+	}
+	if resp.Code != goipp.Code(goipp.StatusOk) {
+		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
 	}
 }
 
@@ -107,5 +137,24 @@ func TestHandleGetJobAttributesEchoesRequestID(t *testing.T) {
 	}
 	if resp.RequestID != req.RequestID {
 		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
+	}
+	if resp.Code != goipp.Code(goipp.StatusOk) {
+		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
+	}
+}
+
+func TestServeIPPUnsupportedOperationReturnsIPPError(t *testing.T) {
+	s := newTestIPPServer(t)
+	req := newIPPRequest(goipp.Op(0x1234), testRequestID)
+
+	resp, err := s.ServeIPP(context.Background(), req, nil)
+	if err != nil {
+		t.Fatalf("ServeIPP: %v", err)
+	}
+	if resp.RequestID != req.RequestID {
+		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
+	}
+	if resp.Code != goipp.Code(goipp.StatusErrorOperationNotSupported) {
+		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusErrorOperationNotSupported))
 	}
 }

@@ -38,28 +38,11 @@ func stringsToValues[S ~[]E, E ~string](strs S) []goipp.Value {
 	return values
 }
 
-// https://datatracker.ietf.org/doc/html/rfc8011#section-4.1.6
-// https://datatracker.ietf.org/doc/html/rfc8011#appendix-B
-type statusCode string
-
-const (
-	scInformational statusCode = "informational"
-	scSuccessful    statusCode = "successful"
-	scRedirection   statusCode = "redirection"
-	scClientError   statusCode = "client-error"
-	scServerError   statusCode = "server-error"
-)
-
-const (
-	codeOK = 0
-)
-
-func baseResponse(s statusCode, requestID uint32) *goipp.Message {
-	m := goipp.NewResponse(goipp.DefaultVersion, codeOK, requestID)
+func baseResponse(status goipp.Status, requestID uint32) *goipp.Message {
+	m := goipp.NewResponse(goipp.DefaultVersion, status, requestID)
 	a := adder(&m.Operation)
 	a("attributes-charset", goipp.TagCharset, ippUTF8)
 	a("attributes-natural-language", goipp.TagLanguage, ippENUS)
-	a("status-code", goipp.TagKeyword, goipp.String(s))
 	return m
 }
 
