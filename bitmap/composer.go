@@ -260,8 +260,8 @@ func (d *Document) align(a textAlign) {
 
 func (d *Document) cmdImage(args ...string) error {
 	const numArgs = 1
-	if len(args) > numArgs {
-		return fmt.Errorf("too many arguments, expected: %d", numArgs)
+	if len(args) != numArgs {
+		return fmt.Errorf("invalid argument count, expected %d, provided: %d", numArgs, len(args))
 	}
 	filename := args[0]
 	f, err := os.Open(filename)

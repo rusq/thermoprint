@@ -3,6 +3,7 @@ package bitmap
 import (
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 
 	"github.com/rusq/thermoprint/fontmgr"
@@ -48,6 +49,33 @@ func TestNewComposer_appliesOptions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, calls)
 	})
+}
+
+func TestDocument_ParseImageCommandRequiresArgument(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{
+			name:   "long command",
+			script: ".image\n",
+		},
+		{
+			name:   "short command",
+			script: ".im\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := NewDocument(NewComposer(2), 203)
+
+			err := doc.Parse(strings.NewReader(tt.script))
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "line 1")
+			assert.ErrorContains(t, err, "invalid argument count, expected 1, provided: 0")
+		})
+	}
 }
 
 func TestComposer_appendImageDither(t *testing.T) {
