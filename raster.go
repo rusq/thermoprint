@@ -86,10 +86,16 @@ func (r *GenericRasteriser) Serialise(img image.Image) ([][]byte, error) {
 		return nil, fmt.Errorf("image size (%d) exceeds %d pixel limit for this rasteriser", width, lineWidthPixels)
 	}
 
-	rasteriseLine := func(img image.Image, y int) []byte {
+	rasteriseLine := func(relY int) []byte {
 		lineBytes := make([]byte, lineWidthBytes)
+		if relY >= height {
+			return lineBytes
+		}
 		for x := range lineWidthPixels {
-			bit := bitmap.PixelBit(img, bounds.Min.X+x, bounds.Min.Y+y, r.Threshold)
+			if x >= width {
+				break
+			}
+			bit := bitmap.PixelBit(img, bounds.Min.X+x, bounds.Min.Y+relY, r.Threshold)
 			if bit {
 				lineBytes[x/8] |= (1 << (7 - (x % 8)))
 			}
@@ -97,31 +103,25 @@ func (r *GenericRasteriser) Serialise(img image.Image) ([][]byte, error) {
 		return lineBytes
 	}
 
-	// Pad height to even number for 2-line packets
-	if height%2 != 0 {
-		height++
+	serializedHeight := height
+	if serializedHeight%linesPerMsg != 0 {
+		serializedHeight += linesPerMsg - serializedHeight%linesPerMsg
 	} else {
-		height += 2 // ensure we have at least 2 lines for the last packet
+		serializedHeight += linesPerMsg
 	}
 
-	numPackets := height / linesPerMsg
+	numPackets := serializedHeight / linesPerMsg
 	packets := make([][]byte, 0, numPackets)
 
 	for packetIndex := range numPackets {
-		y0 := packetIndex * 2
-		y1 := y0 + 1
-
 		row := make([]byte, 0, msgPayloadSz)
 
 		row = append(row, r.PrefixFunc(packetIndex)...)
 
-		// First line (y0)
-		lineBytes := rasteriseLine(img, y0)
-		row = append(row, lineBytes...)
-
-		// Second line (y1)
-		lineBytes = rasteriseLine(img, y1)
-		row = append(row, lineBytes...)
+		for line := range linesPerMsg {
+			relY := packetIndex*linesPerMsg + line
+			row = append(row, rasteriseLine(relY)...)
+		}
 
 		row = append(row, r.Terminator) // terminating byte
 
