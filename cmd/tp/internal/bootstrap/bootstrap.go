@@ -10,10 +10,16 @@ import (
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 )
 
+var enableAdapter = func() error {
+	return cfg.Adapter().Enable()
+}
+
 // Printer returns connected printer.
 func Printer(ctx context.Context) (*thermoprint.LXD02, error) {
-	if err := cfg.Adapter().Enable(); err != nil {
-		return nil, fmt.Errorf("failed to enable Bluetooth adapter: %w", err)
+	if !cfg.DryRun {
+		if err := enableAdapter(); err != nil {
+			return nil, fmt.Errorf("failed to enable Bluetooth adapter: %w", err)
+		}
 	}
 	prn, err := thermoprint.NewLXD02(ctx, cfg.Adapter(), cfg.SearchParams,
 		thermoprint.WithEnergy(uint8(cfg.Energy)),
