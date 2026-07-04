@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,6 +28,12 @@ type Server struct {
 
 	debug   bool
 	dumpdir string
+
+	bonjour struct {
+		enabled bool
+		cancel  context.CancelFunc
+		done    chan struct{}
+	}
 }
 
 // https://datatracker.ietf.org/doc/html/rfc8011
@@ -221,8 +228,17 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ListenAndServe(addr string) error {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	s.srv.Addr = addr
-	return s.srv.ListenAndServe()
+	if s.bonjour.enabled {
+		if err := s.startBonjour(l.Addr().(*net.TCPAddr)); err != nil {
+			slog.Warn("bonjour advertisement disabled", "error", err)
+		}
+	}
+	return s.srv.Serve(l)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -231,6 +247,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
+	// withdraw the advertisement first, so that goodbye packets are sent
+	// while the process is still alive.
+	s.stopBonjour(sctx)
 
 	var errs error
 	for _, fn := range []func(ctx context.Context) error{
