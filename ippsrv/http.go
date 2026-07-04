@@ -126,7 +126,7 @@ func (s *Server) Info(w io.Writer) {
 	} else {
 		for _, job := range jobs {
 			fmt.Fprintf(w, "  - Job ID: %d, Printer: %s, Status: %s\n", job.ID,
-				job.Printer.Name(), job.State)
+				job.Printer.Name(), job.state())
 		}
 	}
 }
