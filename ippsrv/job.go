@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"reflect"
 	"sync"
 	"time"
 
@@ -118,13 +119,44 @@ var jobFsmEvts = []fsm.EventDesc{
 	},
 }
 
-var printerJobLocks sync.Map
+var printerJobLocks sync.Map // fallback locks for non-basePrinter implementations, keyed by instance.
+
+type jobLocker interface {
+	lockJob() func()
+}
+
+type printerJobLockKey struct {
+	typ reflect.Type
+	ptr uintptr
+	val any
+}
 
 func lockPrinterJob(p Printer) func() {
-	lock, _ := printerJobLocks.LoadOrStore(p.Name(), &sync.Mutex{})
+	if p, ok := p.(jobLocker); ok {
+		return p.lockJob()
+	}
+	key, ok := printerJobLockKeyFor(p)
+	if !ok {
+		return func() {}
+	}
+	lock, _ := printerJobLocks.LoadOrStore(key, &sync.Mutex{})
 	mu := lock.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
+}
+
+func printerJobLockKeyFor(p Printer) (printerJobLockKey, bool) {
+	v := reflect.ValueOf(p)
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return printerJobLockKey{}, false
+		}
+		return printerJobLockKey{typ: v.Type(), ptr: v.Pointer()}, true
+	}
+	if v.Type().Comparable() {
+		return printerJobLockKey{typ: v.Type(), val: p}, true
+	}
+	return printerJobLockKey{typ: v.Type(), val: p.Name()}, true
 }
 
 // JobStateReason represents the reason for the current job state.

@@ -225,6 +225,171 @@ func TestPrinterSerializesConcurrentJobs(t *testing.T) {
 	}
 }
 
+func TestPrintersWithSameNameDoNotShareJobLock(t *testing.T) {
+	sp1, err := newSpool(t.TempDir())
+	if err != nil {
+		t.Fatalf("newSpool sp1: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sp1.Close(); err != nil {
+			t.Fatalf("Close sp1: %v", err)
+		}
+	})
+	sp2, err := newSpool(t.TempDir())
+	if err != nil {
+		t.Fatalf("newSpool sp2: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sp2.Close(); err != nil {
+			t.Fatalf("Close sp2: %v", err)
+		}
+	})
+
+	driver1 := &serialBlockingDriver{
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	driver2 := &serialBlockingDriver{
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	printer1, err := WrapDriver(driver1, "same-printer-name", "Test Printer 1")
+	if err != nil {
+		t.Fatalf("WrapDriver printer1: %v", err)
+	}
+	printer2, err := WrapDriver(driver2, "same-printer-name", "Test Printer 2")
+	if err != nil {
+		t.Fatalf("WrapDriver printer2: %v", err)
+	}
+	job1, err := createJob(printer1, 42, "ipp://localhost/printers/same-printer-name", "/printers/same-printer-name/42", "test-job-1", "tester")
+	if err != nil {
+		t.Fatalf("createJob job1: %v", err)
+	}
+	job2, err := createJob(printer2, 42, "ipp://localhost/printers/same-printer-name", "/printers/same-printer-name/42", "test-job-2", "tester")
+	if err != nil {
+		t.Fatalf("createJob job2: %v", err)
+	}
+	data := tinyPNG(t)
+
+	addErr1 := make(chan error, 1)
+	go func() {
+		addErr1 <- sp1.AddJob(context.Background(), job1, data)
+	}()
+
+	select {
+	case <-driver1.entered:
+	case err := <-addErr1:
+		t.Fatalf("first AddJob returned before printing started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first print to start")
+	}
+
+	addErr2 := make(chan error, 1)
+	go func() {
+		addErr2 <- sp2.AddJob(context.Background(), job2, data)
+	}()
+
+	select {
+	case <-driver2.entered:
+	case err := <-addErr2:
+		t.Fatalf("second AddJob returned before printing started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("second printer with same name was blocked by first printer")
+	}
+
+	close(driver1.release)
+	close(driver2.release)
+
+	select {
+	case err := <-addErr1:
+		if err != nil {
+			t.Fatalf("first AddJob: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first AddJob to finish")
+	}
+	select {
+	case err := <-addErr2:
+		if err != nil {
+			t.Fatalf("second AddJob: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second AddJob to finish")
+	}
+}
+
+func TestValuePrinterSerializesConcurrentJobs(t *testing.T) {
+	sp, err := newSpool(t.TempDir())
+	if err != nil {
+		t.Fatalf("newSpool: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sp.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	})
+
+	driver := &serialBlockingDriver{
+		entered: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	printer := valuePrinter{
+		id:     "value-printer",
+		driver: driver,
+	}
+	job1, err := createJob(printer, 42, "ipp://localhost/printers/value-printer", "/printers/value-printer/42", "test-job-1", "tester")
+	if err != nil {
+		t.Fatalf("createJob job1: %v", err)
+	}
+	job2, err := createJob(printer, 43, "ipp://localhost/printers/value-printer", "/printers/value-printer/43", "test-job-2", "tester")
+	if err != nil {
+		t.Fatalf("createJob job2: %v", err)
+	}
+
+	addErr1 := make(chan error, 1)
+	go func() {
+		addErr1 <- sp.AddJob(context.Background(), job1, []byte("print data"))
+	}()
+
+	select {
+	case <-driver.entered:
+	case err := <-addErr1:
+		t.Fatalf("first AddJob returned before printing started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first print to start")
+	}
+
+	addErr2 := make(chan error, 1)
+	go func() {
+		addErr2 <- sp.AddJob(context.Background(), job2, []byte("print data"))
+	}()
+
+	select {
+	case <-driver.entered:
+		t.Fatal("second value-printer job started before first job was released")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(driver.release)
+
+	select {
+	case err := <-addErr1:
+		if err != nil {
+			t.Fatalf("first AddJob: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first AddJob to finish")
+	}
+	select {
+	case err := <-addErr2:
+		if err != nil {
+			t.Fatalf("second AddJob: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second AddJob to finish")
+	}
+}
+
 type blockingDriver struct {
 	started chan<- struct{}
 	release <-chan struct{}
@@ -260,6 +425,26 @@ func (d *serialBlockingDriver) PrintImage(ctx context.Context, img image.Image) 
 }
 func (serialBlockingDriver) DPI() float64 { return 203 }
 func (serialBlockingDriver) Width() int   { return 384 }
+
+type valuePrinter struct {
+	id     string
+	driver *serialBlockingDriver
+}
+
+func (p valuePrinter) Name() string                { return p.id }
+func (p valuePrinter) MakeAndModel() string        { return "Value Printer" }
+func (p valuePrinter) Info() string                { return "Value Printer" }
+func (p valuePrinter) State() PrinterState         { return PSIdle }
+func (p valuePrinter) Ready() bool                 { return true }
+func (p valuePrinter) UpTime() int                 { return 0 }
+func (p valuePrinter) MediaSupported() []string    { return []string{"roll_57mm"} }
+func (p valuePrinter) MediaDefault() string        { return "roll_57mm" }
+func (p valuePrinter) SetState(state PrinterState) {}
+func (p valuePrinter) UUID() string                { return p.id }
+func (p valuePrinter) Driver() Driver              { return p.driver }
+func (p valuePrinter) Print(ctx context.Context, data []byte) error {
+	return p.driver.PrintImage(ctx, nil)
+}
 
 func tinyPNG(t *testing.T) []byte {
 	t.Helper()
