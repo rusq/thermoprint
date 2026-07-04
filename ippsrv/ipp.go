@@ -8,6 +8,7 @@ package ippsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -36,6 +37,37 @@ type IPPHandlerFunc func(ctx context.Context, req *goipp.Message, body []byte) (
 
 func (f IPPHandlerFunc) ServeIPP(ctx context.Context, req *goipp.Message, body []byte) (resp *goipp.Message, err error) {
 	return f(ctx, req, body)
+}
+
+type ippStatusError struct {
+	status goipp.Status
+	err    error
+}
+
+func (e ippStatusError) Error() string {
+	return e.err.Error()
+}
+
+func (e ippStatusError) Unwrap() error {
+	return e.err
+}
+
+func ippError(status goipp.Status, format string, args ...any) error {
+	return ippStatusError{
+		status: status,
+		err:    fmt.Errorf(format, args...),
+	}
+}
+
+func ippStatusFromError(err error) goipp.Status {
+	var statusErr ippStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.status
+	}
+	if errors.Is(err, errJobNotFound) {
+		return goipp.StatusErrorNotFound
+	}
+	return goipp.StatusErrorInternal
 }
 
 func newBasicIPPServer(baseURL string, pp ...Printer) (*basicIPPServer, error) {
@@ -94,15 +126,21 @@ func (ih *basicIPPServer) ServeIPP(ctx context.Context, req *goipp.Message, body
 	next, ok := handlers[goipp.Op(req.Code)]
 	if !ok || next == nil {
 		lg.Error("unsupported operation", "code", req.Code, "is_mapped", ok)
-		return nil, fmt.Errorf("unsupported operation: %d", req.Code)
+		return baseResponse(goipp.StatusErrorOperationNotSupported, req.RequestID), nil
 	}
 	slog.Debug("ipp request", "code", req.Code, "request_id", req.RequestID)
-	return next(ctx, req, body)
+	resp, err = next(ctx, req, body)
+	if err != nil {
+		status := ippStatusFromError(err)
+		lg.Error("failed to handle IPP request", "error", err, "status", status)
+		return baseResponse(status, req.RequestID), nil
+	}
+	return resp, nil
 }
 
-func (ih *basicIPPServer) printerAttributes(p Printer) *goipp.Message {
-	m := baseResponse(scSuccessful)
-	a := adder(m.Operation)
+func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32) *goipp.Message {
+	m := baseResponse(goipp.StatusOk, requestID)
+	a := adder(&m.Operation)
 	a("printer-uri-supported", goipp.TagURI, goipp.String(ih.baseURL))
 	a("uri-authentication-supported", goipp.TagKeyword, ippNone)
 	a("uri-security-supported", goipp.TagKeyword, ippNone)
@@ -148,60 +186,60 @@ func (ih *basicIPPServer) handleGetPrinterAttributes(ctx context.Context, req *g
 	attrs, ok := findAttr(req.Operation, "requested-attributes")
 	lg.Debug("requested attributes", "ok", ok, "attrs", attrs)
 
-	resp = ih.printerAttributes(p)
+	resp = ih.printerAttributes(p, req.RequestID)
 	return
 }
 
 func (ih *basicIPPServer) printerFromRequest(req *goipp.Message) (Printer, error) {
 	strName, err := extractValue[goipp.String](req.Operation, "printer-uri")
 	if err != nil {
-		return nil, err
+		return nil, ippError(goipp.StatusErrorBadRequest, "invalid printer-uri: %w", err)
 	}
 	printerURI := strName.String()
 	if printerURI == "" {
-		return nil, fmt.Errorf("printer-uri is empty in request")
+		return nil, ippError(goipp.StatusErrorBadRequest, "printer-uri is empty in request")
 	}
 	uri, err := url.Parse(printerURI)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse printer-uri %q: %w", printerURI, err)
+		return nil, ippError(goipp.StatusErrorBadRequest, "failed to parse printer-uri %q: %w", printerURI, err)
 	}
 	if uri.Scheme != "ipp" && uri.Scheme != "ipps" {
-		return nil, fmt.Errorf("printer-uri %q has unsupported scheme %q, expected 'ipp' or 'ipps'", printerURI, uri.Scheme)
+		return nil, ippError(goipp.StatusErrorBadRequest, "printer-uri %q has unsupported scheme %q, expected 'ipp' or 'ipps'", printerURI, uri.Scheme)
 	}
 	// Extract the printer name from the URI path
 	printerName := strings.TrimPrefix(uri.Path, ih.baseURL)
 	if printerName == "" || printerName == "/" {
-		return nil, fmt.Errorf("printer-uri %q has no printer name in path", printerURI)
+		return nil, ippError(goipp.StatusErrorBadRequest, "printer-uri %q has no printer name in path", printerURI)
 	}
 	slog.Debug("printer URI parsed", "printer_name", printerName, "uri", printerURI)
 
 	if p, ok := ih.Printer[printerName]; ok {
 		return p, nil
 	}
-	return nil, fmt.Errorf("printer %q not found", printerURI)
+	return nil, ippError(goipp.StatusErrorNotFound, "printer %q not found", printerURI)
 }
 
 func (ih *basicIPPServer) handleWithBaseResponse(ctx context.Context, req *goipp.Message, _ []byte) (resp *goipp.Message, err error) {
-	return baseResponse(scSuccessful), nil
+	return baseResponse(goipp.StatusOk, req.RequestID), nil
 }
 
 func (ih *basicIPPServer) handleGetJobAttributes(ctx context.Context, req *goipp.Message, _ []byte) (resp *goipp.Message, err error) {
 	// find job id in operation attributes
 	v, err := extractValue[goipp.Integer](req.Operation, "job-id")
 	if err != nil {
-		return resp, fmt.Errorf("failed to extract job-id: %w", err)
+		return resp, ippError(goipp.StatusErrorBadRequest, "failed to extract job-id: %w", err)
 	}
 	jobID := JobID(v)
 	if jobID == 0 {
-		return nil, fmt.Errorf("job-id not provided in request")
+		return nil, ippError(goipp.StatusErrorBadRequest, "job-id not provided in request")
 	}
 	job, err := ih.spool.GetJob(jobID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get job with ID %d: %w", jobID, err)
 	}
 
-	resp = goipp.NewResponse(goipp.DefaultVersion, codeOK, requestNum)
-	resp.Operation = job.attributes()
+	resp = baseResponse(goipp.StatusOk, req.RequestID)
+	resp.Job = job.attributes()
 	return resp, nil
 }
 
@@ -218,7 +256,9 @@ func (ih *basicIPPServer) handlePrintJob(ctx context.Context, req *goipp.Message
 	if err := ih.spool.AddJob(ctx, j, body); err != nil {
 		return nil, fmt.Errorf("failed to add job to spool: %w", err)
 	}
-	return baseResponse(scSuccessful), nil
+	resp = baseResponse(goipp.StatusOk, req.RequestID)
+	resp.Job = j.attributes()
+	return resp, nil
 }
 
 func asString(vv goipp.Values, ok bool) (string, bool) {
@@ -268,14 +308,22 @@ func (ih *basicIPPServer) handleGetJobs(ctx context.Context, req *goipp.Message,
 		return nil, fmt.Errorf("failed to get jobs for printer %q: %w", p.Name(), err)
 	}
 
-	resp := baseResponse(scSuccessful)
+	resp := baseResponse(goipp.StatusOk, req.RequestID)
+	resp.Groups = goipp.Groups{
+		{
+			Tag:   goipp.TagOperationGroup,
+			Attrs: resp.Operation,
+		},
+	}
 
 	for _, job := range jobs {
 		if username != "" && job.Username != username {
 			continue // Skip jobs not owned by the requesting user
 		}
-		attrs := job.attributes()
-		resp.Operation = append(resp.Operation, attrs...)
+		resp.Groups.Add(goipp.Group{
+			Tag:   goipp.TagJobGroup,
+			Attrs: job.attributes(),
+		})
 	}
 
 	return resp, nil

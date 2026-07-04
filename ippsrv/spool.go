@@ -31,9 +31,10 @@ type spool struct {
 	dir  string        // Directory where jobs are spooled
 	msgC chan spoolmsg // Channel for spool messages
 
-	mu          sync.Mutex         // Mutex to protect concurrent access
-	jobs        map[JobID]*Job     // In-memory cache of jobs, keyed by JobID
-	printerJobs map[string][]JobID // Jobs per printer, keyed by printer ID
+	mu           sync.Mutex             // Mutex to protect concurrent access
+	jobs         map[JobID]*Job         // In-memory cache of jobs, keyed by JobID
+	printerJobs  map[string][]JobID     // Jobs per printer, keyed by printer ID
+	printerLocks map[string]*sync.Mutex // Job processing locks per printer, keyed by printer ID
 }
 
 type spoolmsg struct {
@@ -55,10 +56,11 @@ func newSpool(spoolDir string) (*spool, error) {
 		}
 	}
 	sp := &spool{
-		dir:         spoolDir,
-		jobs:        make(map[JobID]*Job),
-		printerJobs: make(map[string][]JobID),
-		msgC:        make(chan spoolmsg, 100), // Buffered channel for spool messages
+		dir:          spoolDir,
+		jobs:         make(map[JobID]*Job),
+		printerJobs:  make(map[string][]JobID),
+		printerLocks: make(map[string]*sync.Mutex),
+		msgC:         make(chan spoolmsg, 100), // Buffered channel for spool messages
 	}
 	go sp.worker()
 	return sp, nil
@@ -146,11 +148,6 @@ func (s *spool) removeJobLocked(jobID JobID) error {
 		return errJobNotFound
 	}
 
-	filePath := s.jobFilePath(jobID)
-	if err := os.Remove(filePath); err != nil {
-		return fmt.Errorf("failed to remove job file %s: %w", filePath, err)
-	}
-
 	delete(s.jobs, jobID)
 
 	// Remove the job ID from the printer's job list
@@ -161,6 +158,13 @@ func (s *spool) removeJobLocked(jobID JobID) error {
 			s.printerJobs[job.Printer.Name()] = printerJobs
 			break
 		}
+	}
+
+	// The file is removed last so that a failure cannot leave a job that is
+	// registered but has no file; a missing file is not an error.
+	filePath := s.jobFilePath(jobID)
+	if err := os.Remove(filePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to remove job file %s: %w", filePath, err)
 	}
 	return nil
 }
@@ -173,26 +177,48 @@ func (s *spool) AddJob(ctx context.Context, job *Job, data []byte) error {
 		return errors.New("job printer cannot be nil")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 
-	if err := s.addJobLocked(job); err != nil {
-		return fmt.Errorf("failed to add job %d: %w", job.ID, err)
+		if err := s.addJobLocked(job); err != nil {
+			return fmt.Errorf("failed to add job %d: %w", job.ID, err)
+		}
+
+		jobFile := s.jobFilePath(job.ID)
+		if err := os.WriteFile(jobFile, data, 0644); err != nil {
+			// Roll back the registration so the job does not linger in the
+			// spool without a file.
+			if rerr := s.removeJobLocked(job.ID); rerr != nil {
+				slog.Error("failed to roll back job registration", "job_id", job.ID, "error", rerr)
+			}
+			return fmt.Errorf("failed to write job data to file %s: %w", jobFile, err)
+		}
+		slog.Info("job added", "job_id", job.ID, "printer", job.Printer.Name(), "file", jobFile)
+		return nil
+	}(); err != nil {
+		return err
 	}
 
-	jobFile := s.jobFilePath(job.ID)
-	f, err := os.Create(jobFile)
-	if err != nil {
-		return fmt.Errorf("failed to create job file %s: %w", jobFile, err)
-	}
-	defer f.Close()
-	// Write the job data to the file
-	if _, err := f.Write(data); err != nil {
-		return fmt.Errorf("failed to write job data to file %s: %w", jobFile, err)
-	}
-	slog.Info("job added", "job_id", job.ID, "printer", job.Printer.Name(), "file", jobFile)
-
+	unlock := s.lockPrinter(job.Printer.Name())
+	defer unlock()
 	return job.sm.Event(ctx, jobEvtProcess, data)
+}
+
+// lockPrinter serialises job processing per printer, so that concurrent jobs
+// for the same printer do not interleave printing and printer state changes.
+// The spool identifies printers by name, as in printerJobs; locks are per
+// spool, so same-named printers served by different spools stay independent.
+func (s *spool) lockPrinter(prnID string) (unlock func()) {
+	s.mu.Lock()
+	mu, ok := s.printerLocks[prnID]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.printerLocks[prnID] = mu
+	}
+	s.mu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 func (s *spool) jobFilePath(jobID JobID) string {
@@ -205,12 +231,6 @@ func (s *spool) RemoveJob(jobID JobID) error {
 
 	if err := s.removeJobLocked(jobID); err != nil {
 		return fmt.Errorf("failed to remove job %d: %w", jobID, err)
-	}
-	// Remove the job file from the spool directory
-
-	jobFile := s.jobFilePath(jobID)
-	if err := os.Remove(s.jobFilePath(jobID)); err != nil {
-		return fmt.Errorf("failed to remove job file %s: %w", jobFile, err)
 	}
 	return nil
 }
@@ -268,11 +288,7 @@ func (s *spool) GetJobs(prnID string) ([]*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	jobIDs, ok := s.printerJobs[prnID]
-	if !ok {
-		return nil, fmt.Errorf("no jobs found for printer %s", prnID)
-	}
-
+	jobIDs := s.printerJobs[prnID]
 	jobs := make([]*Job, 0, len(jobIDs))
 	for _, jobID := range jobIDs {
 		job, ok := s.jobs[jobID]
@@ -280,9 +296,6 @@ func (s *spool) GetJobs(prnID string) ([]*Job, error) {
 			continue // Skip if the job is not found
 		}
 		jobs = append(jobs, job)
-	}
-	if len(jobs) == 0 {
-		return nil, errJobNotFound
 	}
 	return jobs, nil
 }

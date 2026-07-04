@@ -126,7 +126,7 @@ func (s *Server) Info(w io.Writer) {
 	} else {
 		for _, job := range jobs {
 			fmt.Fprintf(w, "  - Job ID: %d, Printer: %s, Status: %s\n", job.ID,
-				job.Printer.Name(), job.State)
+				job.Printer.Name(), job.state())
 		}
 	}
 }
@@ -207,7 +207,9 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(hdrContentType, ippMIMEType)
 	resp, err := s.is.ServeIPP(r.Context(), &msg, payload)
 	if err != nil {
-		baseResponse(scServerError).Encode(w)
+		if err := baseResponse(goipp.StatusErrorInternal, msg.RequestID).Encode(w); err != nil {
+			slog.Error("failed to encode response", "error", err)
+		}
 		slog.Error("failed to handle print request", "error", err)
 		return
 	}

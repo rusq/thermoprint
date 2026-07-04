@@ -16,7 +16,7 @@ const (
 )
 
 // adder is a helper function to add attributes to an operation.
-func adder(op goipp.Attributes) func(s string, tag goipp.Tag, values ...goipp.Value) {
+func adder(op *goipp.Attributes) func(s string, tag goipp.Tag, values ...goipp.Value) {
 	return func(name string, tag goipp.Tag, values ...goipp.Value) {
 		if len(values) == 0 {
 			values = []goipp.Value{goipp.String("")}
@@ -38,29 +38,11 @@ func stringsToValues[S ~[]E, E ~string](strs S) []goipp.Value {
 	return values
 }
 
-// https://datatracker.ietf.org/doc/html/rfc8011#section-4.1.6
-// https://datatracker.ietf.org/doc/html/rfc8011#appendix-B
-type statusCode string
-
-const (
-	scInformational statusCode = "informational"
-	scSuccessful    statusCode = "successful"
-	scRedirection   statusCode = "redirection"
-	scClientError   statusCode = "client-error"
-	scServerError   statusCode = "server-error"
-)
-
-const (
-	codeOK     = 0
-	requestNum = 1
-)
-
-func baseResponse(s statusCode) *goipp.Message {
-	m := goipp.NewRequest(goipp.DefaultVersion, codeOK, requestNum)
-	a := adder(m.Operation)
+func baseResponse(status goipp.Status, requestID uint32) *goipp.Message {
+	m := goipp.NewResponse(goipp.DefaultVersion, status, requestID)
+	a := adder(&m.Operation)
 	a("attributes-charset", goipp.TagCharset, ippUTF8)
 	a("attributes-natural-language", goipp.TagLanguage, ippENUS)
-	a("status-code", goipp.TagKeyword, goipp.String(s))
 	return m
 }
 

@@ -39,6 +39,11 @@ const (
 	responseTimeout = 3 * time.Second        // Timeout for sending data and waiting for response
 )
 
+const (
+	gBatLow      = 20.0
+	gBatCritical = 10.0
+)
+
 // LXD02 represents a LX-D02 printer.  Instance is not safe for concurrent use.
 // Zero value is unusable, initialise with [NewLXD02]
 type LXD02 struct {
@@ -315,10 +320,10 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 					continue
 				}
 				slog.DebugContext(ctx, "status", "status", st)
-				if st.BatteryLevel < 20.0 {
-					slog.WarnContext(ctx, "battery level low", "level", st.BatteryLevel)
-				} else if st.BatteryLevel < 10.0 {
+				if st.BatteryLevel < gBatCritical {
 					slog.ErrorContext(ctx, "BATTERY LEVEL CRITICAL", "level", st.BatteryLevel)
+				} else if st.BatteryLevel < gBatLow {
+					slog.WarnContext(ctx, "battery level low", "level", st.BatteryLevel)
 				}
 				if st.NoPaper {
 					slog.ErrorContext(ctx, "no paper")

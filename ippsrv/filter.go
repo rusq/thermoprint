@@ -30,7 +30,7 @@ type imageMagickFilter struct{}
 var _ Filter = &imageMagickFilter{}
 
 func (f *imageMagickFilter) ToRaster(ctx context.Context, dpi int, data []byte) ([]image.Image, error) {
-	cmd := exec.CommandContext(ctx, "magick", "-", "-density", strconv.Itoa(dpi), "-background", "white", "-alpha", "remove", "png:-")
+	cmd := exec.CommandContext(ctx, "magick", "-density", strconv.Itoa(dpi), "-", "-background", "white", "-alpha", "remove", "png:-")
 	cmd.Stdin = bytes.NewReader(data)
 	out, err := cmd.Output()
 	if err != nil {

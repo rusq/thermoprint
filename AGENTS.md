@@ -27,3 +27,20 @@ Recent commits use short, imperative, lowercase summaries such as `extract filte
 ## Security & Configuration Tips
 
 Do not commit local Bluetooth credentials, printer-specific secrets, generated traces, or large private image samples. Keep hardware-dependent behavior behind explicit commands and document platform assumptions when adding Bluetooth or IPP server changes.
+
+## Solving issue from a BUGS.md file
+If asked to work on an open issue from BUGS.md or similar file (a file that describes bugs or gaps), mark the issue as [DONE] when finished working.
+
+For example, if there was a sample issue:
+```
+## [P3] Error-path encode failure is not logged; test assertions duplicated
+
+Here goes the issue description ...
+
+Proposed fix: ....
+```
+Once it is fixed, the Heading should be updated to 
+```
+## [DONE] [P3] Error-path encode failure is not logged; test assertions duplicated
+<the rest remains untouched>
+```
