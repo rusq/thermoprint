@@ -2,6 +2,7 @@ package ippsrv
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"testing"
 
@@ -47,6 +48,28 @@ func newIPPRequest(op goipp.Op, requestID uint32) *goipp.Message {
 	a("attributes-natural-language", goipp.TagLanguage, ippENUS)
 	a("printer-uri", goipp.TagURI, goipp.String("ipp://localhost/printers/test-printer"))
 	return req
+}
+
+func addTestJob(t *testing.T, s *basicIPPServer, id JobID, name, username string) *Job {
+	t.Helper()
+
+	p := s.Printer["test-printer"]
+	jobURL := fmt.Sprintf("/printers/test-printer/%d", id)
+	job, err := createJob(p, id, "ipp://localhost/printers/test-printer", jobURL, name, username)
+	if err != nil {
+		t.Fatalf("createJob: %v", err)
+	}
+	job.Processing = job.Created
+	job.Completed = job.Created
+	sp := s.spool.(*spool)
+	sp.mu.Lock()
+	if err := sp.addJobLocked(job); err != nil {
+		sp.mu.Unlock()
+		t.Fatalf("addJobLocked: %v", err)
+	}
+	sp.mu.Unlock()
+
+	return job
 }
 
 func TestBaseResponseUsesRequestID(t *testing.T) {
@@ -114,18 +137,7 @@ func TestHandleGetPrinterAttributesEchoesRequestID(t *testing.T) {
 
 func TestHandleGetJobAttributesEchoesRequestID(t *testing.T) {
 	s := newTestIPPServer(t)
-	p := s.Printer["test-printer"]
-	job, err := createJob(p, 42, "ipp://localhost/printers/test-printer", "/printers/test-printer/42", "test-job", "tester")
-	if err != nil {
-		t.Fatalf("createJob: %v", err)
-	}
-	sp := s.spool.(*spool)
-	sp.mu.Lock()
-	if err := sp.addJobLocked(job); err != nil {
-		sp.mu.Unlock()
-		t.Fatalf("addJobLocked: %v", err)
-	}
-	sp.mu.Unlock()
+	job := addTestJob(t, s, 42, "test-job", "tester")
 
 	req := newIPPRequest(goipp.OpGetJobAttributes, testRequestID)
 	a := adder(&req.Operation)
@@ -140,6 +152,114 @@ func TestHandleGetJobAttributesEchoesRequestID(t *testing.T) {
 	}
 	if resp.Code != goipp.Code(goipp.StatusOk) {
 		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
+	}
+	if _, ok := findAttr(resp.Operation, "attributes-charset"); !ok {
+		t.Fatal("missing attributes-charset operation attribute")
+	}
+	if _, ok := findAttr(resp.Operation, "attributes-natural-language"); !ok {
+		t.Fatal("missing attributes-natural-language operation attribute")
+	}
+	if _, ok := findAttr(resp.Operation, "job-id"); ok {
+		t.Fatal("job-id is in operation attributes")
+	}
+	jobID, err := extractValue[goipp.Integer](resp.Job, "job-id")
+	if err != nil {
+		t.Fatalf("job-id: %v", err)
+	}
+	if JobID(jobID) != job.ID {
+		t.Fatalf("job-id = %d, want %d", jobID, job.ID)
+	}
+}
+
+func TestHandleGetJobsReturnsSeparateJobGroups(t *testing.T) {
+	s := newTestIPPServer(t)
+	job1 := addTestJob(t, s, 42, "first-job", "tester")
+	job2 := addTestJob(t, s, 43, "second-job", "tester")
+
+	req := newIPPRequest(goipp.OpGetJobs, testRequestID)
+	resp, err := s.handleGetJobs(context.Background(), req, nil)
+	if err != nil {
+		t.Fatalf("handleGetJobs: %v", err)
+	}
+	if resp.RequestID != req.RequestID {
+		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
+	}
+	if resp.Code != goipp.Code(goipp.StatusOk) {
+		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
+	}
+	if _, ok := findAttr(resp.Operation, "attributes-charset"); !ok {
+		t.Fatal("missing attributes-charset operation attribute")
+	}
+	if _, ok := findAttr(resp.Operation, "attributes-natural-language"); !ok {
+		t.Fatal("missing attributes-natural-language operation attribute")
+	}
+	if _, ok := findAttr(resp.Operation, "job-id"); ok {
+		t.Fatal("job-id is in operation attributes")
+	}
+
+	groups := resp.AttrGroups()
+	if len(groups) != 3 {
+		t.Fatalf("len(AttrGroups()) = %d, want 3", len(groups))
+	}
+	if groups[0].Tag != goipp.TagOperationGroup {
+		t.Fatalf("groups[0].Tag = %v, want %v", groups[0].Tag, goipp.TagOperationGroup)
+	}
+	if _, ok := findAttr(groups[0].Attrs, "job-id"); ok {
+		t.Fatal("job-id is in encoded operation group")
+	}
+	for i, job := range []*Job{job1, job2} {
+		group := groups[i+1]
+		if group.Tag != goipp.TagJobGroup {
+			t.Fatalf("groups[%d].Tag = %v, want %v", i+1, group.Tag, goipp.TagJobGroup)
+		}
+		jobID, err := extractValue[goipp.Integer](group.Attrs, "job-id")
+		if err != nil {
+			t.Fatalf("groups[%d] job-id: %v", i+1, err)
+		}
+		if JobID(jobID) != job.ID {
+			t.Fatalf("groups[%d] job-id = %d, want %d", i+1, jobID, job.ID)
+		}
+		jobName, err := extractValue[goipp.String](group.Attrs, "job-name")
+		if err != nil {
+			t.Fatalf("groups[%d] job-name: %v", i+1, err)
+		}
+		if jobName.String() != job.Name {
+			t.Fatalf("groups[%d] job-name = %q, want %q", i+1, jobName, job.Name)
+		}
+		jobURI, err := extractValue[goipp.String](group.Attrs, "job-uri")
+		if err != nil {
+			t.Fatalf("groups[%d] job-uri: %v", i+1, err)
+		}
+		if jobURI.String() != job.JobURI {
+			t.Fatalf("groups[%d] job-uri = %q, want %q", i+1, jobURI, job.JobURI)
+		}
+	}
+
+	encoded, err := resp.EncodeBytes()
+	if err != nil {
+		t.Fatalf("EncodeBytes: %v", err)
+	}
+	var decoded goipp.Message
+	if err := decoded.DecodeBytes(encoded); err != nil {
+		t.Fatalf("DecodeBytes: %v", err)
+	}
+	decodedGroups := decoded.AttrGroups()
+	if len(decodedGroups) != 3 {
+		t.Fatalf("decoded len(AttrGroups()) = %d, want 3", len(decodedGroups))
+	}
+	for i, tag := range []goipp.Tag{goipp.TagOperationGroup, goipp.TagJobGroup, goipp.TagJobGroup} {
+		if decodedGroups[i].Tag != tag {
+			t.Fatalf("decoded groups[%d].Tag = %v, want %v", i, decodedGroups[i].Tag, tag)
+		}
+	}
+	for i, job := range []*Job{job1, job2} {
+		jobID, err := extractValue[goipp.Integer](decodedGroups[i+1].Attrs, "job-id")
+		if err != nil {
+			t.Fatalf("decoded groups[%d] job-id: %v", i+1, err)
+		}
+		if JobID(jobID) != job.ID {
+			t.Fatalf("decoded groups[%d] job-id = %d, want %d", i+1, jobID, job.ID)
+		}
 	}
 }
 

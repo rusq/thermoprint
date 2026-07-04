@@ -200,8 +200,8 @@ func (ih *basicIPPServer) handleGetJobAttributes(ctx context.Context, req *goipp
 		return nil, fmt.Errorf("failed to get job with ID %d: %w", jobID, err)
 	}
 
-	resp = goipp.NewResponse(goipp.DefaultVersion, goipp.StatusOk, req.RequestID)
-	resp.Operation = job.attributes()
+	resp = baseResponse(goipp.StatusOk, req.RequestID)
+	resp.Job = job.attributes()
 	return resp, nil
 }
 
@@ -271,13 +271,21 @@ func (ih *basicIPPServer) handleGetJobs(ctx context.Context, req *goipp.Message,
 	}
 
 	resp := baseResponse(goipp.StatusOk, req.RequestID)
+	resp.Groups = goipp.Groups{
+		{
+			Tag:   goipp.TagOperationGroup,
+			Attrs: resp.Operation,
+		},
+	}
 
 	for _, job := range jobs {
 		if username != "" && job.Username != username {
 			continue // Skip jobs not owned by the requesting user
 		}
-		attrs := job.attributes()
-		resp.Operation = append(resp.Operation, attrs...)
+		resp.Groups.Add(goipp.Group{
+			Tag:   goipp.TagJobGroup,
+			Attrs: job.attributes(),
+		})
 	}
 
 	return resp, nil

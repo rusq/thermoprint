@@ -388,17 +388,16 @@ func (j *Job) attributes() goipp.Attributes {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 
-	noValue := goipp.String("no-value")
-
-	nulltime := func(t time.Time) goipp.Value {
-		if t.IsZero() {
-			return noValue
-		}
-		return goipp.Integer(int32(t.Unix()))
-	}
-
 	attrs := goipp.Attributes{}
 	a := adder(&attrs)
+	addTime := func(name string, t time.Time) {
+		if t.IsZero() {
+			a(name, goipp.TagNoValue, goipp.Void{})
+			return
+		}
+		a(name, goipp.TagDateTime, goipp.Time{Time: t})
+	}
+
 	a("job-id", goipp.TagInteger, goipp.Integer(j.ID))
 	a("job-name", goipp.TagName, goipp.String(j.Name))
 	a("job-uri", goipp.TagURI, goipp.String(j.JobURI))
@@ -406,9 +405,9 @@ func (j *Job) attributes() goipp.Attributes {
 	a("job-state-reasons", goipp.TagKeyword, stringsToValues(j.StateReasons)...)
 	a("job-printer-uri", goipp.TagURI, goipp.String(j.PrinterURI))
 	a("job-originating-user-name", goipp.TagName, goipp.String(j.Username))
-	a("time-at-creation", goipp.TagDateTime, nulltime(j.Created))
-	a("time-at-processing", goipp.TagDateTime, nulltime(j.Processing))
-	a("time-at-completed", goipp.TagDateTime, nulltime(j.Completed))              // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.3
+	addTime("time-at-creation", j.Created)
+	addTime("time-at-processing", j.Processing)
+	addTime("time-at-completed", j.Completed)                                     // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.3
 	a("job-printer-up-time", goipp.TagInteger, goipp.Integer(j.Printer.UpTime())) // https: //datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.4
 	return attrs
 }
