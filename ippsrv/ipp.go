@@ -138,10 +138,13 @@ func (ih *basicIPPServer) ServeIPP(ctx context.Context, req *goipp.Message, body
 	return resp, nil
 }
 
-func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32) *goipp.Message {
+func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printerURI string) *goipp.Message {
+	if printerURI == "" {
+		printerURI = ih.baseURL + p.Name()
+	}
 	m := baseResponse(goipp.StatusOk, requestID)
 	a := adder(&m.Operation)
-	a("printer-uri-supported", goipp.TagURI, goipp.String(ih.baseURL))
+	a("printer-uri-supported", goipp.TagURI, goipp.String(printerURI))
 	a("uri-authentication-supported", goipp.TagKeyword, ippNone)
 	a("uri-security-supported", goipp.TagKeyword, ippNone)
 	a("printer-name", goipp.TagName, goipp.String(p.Name()))
@@ -149,7 +152,7 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32) *goipp.
 	a("printer-make-and-model", goipp.TagText, goipp.String(p.MakeAndModel()))
 	a("printer-state", goipp.TagEnum, goipp.Integer(p.State()))
 	a("printer-state-reasons", goipp.TagKeyword, ippNone)
-	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"))
+	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"), goipp.String("2.0"))
 	a("operations-supported", goipp.TagEnum,
 		goipp.Integer(goipp.OpPrintJob),
 		goipp.Integer(goipp.OpValidateJob),
@@ -172,7 +175,7 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32) *goipp.
 	a("compression-supported", goipp.TagKeyword, ippNone)
 	a("media-supported", goipp.TagKeyword, stringsToValues(p.MediaSupported())...)
 	a("media-default", goipp.TagKeyword, goipp.String(p.MediaDefault()))
-	a("printer-uuid", goipp.TagURI, goipp.String(p.UUID()))
+	a("printer-uuid", goipp.TagURI, goipp.String("urn:uuid:"+p.UUID()))
 
 	return m
 }
@@ -186,7 +189,11 @@ func (ih *basicIPPServer) handleGetPrinterAttributes(ctx context.Context, req *g
 	attrs, ok := findAttr(req.Operation, "requested-attributes")
 	lg.Debug("requested attributes", "ok", ok, "attrs", attrs)
 
-	resp = ih.printerAttributes(p, req.RequestID)
+	// echo the printer-uri the client used, if any, as
+	// printer-uri-supported.
+	uri, _ := extractValue[goipp.String](req.Operation, "printer-uri")
+
+	resp = ih.printerAttributes(p, req.RequestID, uri.String())
 	return
 }
 

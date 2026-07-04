@@ -19,24 +19,34 @@ var CmdServer = &base.Command{
 	Short:      "start the IPP server",
 	PrintFlags: true,
 	Long: `
-This is a sample command to get you started.
+Starts the IPP server that accepts print jobs for the connected printer.
+
+By default the printer is advertised on the local network via Bonjour/DNS-SD,
+so it appears in e.g. macOS "Printers & Scanners" -> Add Printer.  For the
+advertisement to work, the server must listen on a non-loopback address:
+binding to a loopback address (e.g. -addr localhost:6310) disables it.
 `,
 }
 
 var (
 	addr         string
 	protoDumpDir string
+	noMDNS       bool
 )
 
 func init() {
 	CmdServer.Flag.StringVar(&addr,
 		"addr",
-		"localhost:6310",
-		"custom flag is different than the global flags")
+		":6310",
+		"address to listen on; bind a non-loopback address to be discoverable on the network")
 	CmdServer.Flag.StringVar(&protoDumpDir,
 		"dumpdir",
 		"",
 		"directory for protocol dumps; if not specified, a temporary directory will be used")
+	CmdServer.Flag.BoolVar(&noMDNS,
+		"no-mdns",
+		false,
+		"disable Bonjour/DNS-SD printer advertisement")
 }
 
 func runServer(ctx context.Context, cmd *base.Command, args []string) error {
@@ -57,6 +67,9 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 	var opts = []ippsrv.Option{
 		ippsrv.WithDebug(cfg.Verbose),
 		ippsrv.WithDumpDir(protoDumpDir),
+	}
+	if !noMDNS {
+		opts = append(opts, ippsrv.WithBonjour())
 	}
 	s, err := ippsrv.New(ippPrn, opts...)
 	if err != nil {
