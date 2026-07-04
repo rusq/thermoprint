@@ -1,17 +1,17 @@
 *PPD-Adobe: "4.3"
-*% PPD File for Thermal Printer (57 mm, 203 DPI)
+*% PPD File for LX-D02 Thermal Printer (58 mm media, 48.05 mm printable width, 203 DPI)
 *% Originally based on https://github.com/big-vl/catcombo/blob/0dccf039da850fc360277203b67ff0656668ecaa/pdd/LX-D2-thermal_57mm_203dpi.ppd
 *% see https://gist.github.com/JakeVdub/3cce5604cf82d0172a4c2ee267e6b677
 *FormatVersion: "4.3"
-*PSVersion: "(2011) 108"
+*PSVersion: "(3010.000) 0"
 *FileVersion: "1.0"
 *LanguageEncoding: ISOLatin1
 *LanguageVersion: English
 *Manufacturer: "Shenzhen Xiqi Technology Co., Ltd."
-*ModelName: "Thermal Printer LX-D2 203 DPI"
-*Product: "(Thermal Printer LX-D2 203 DPI)"
-*NickName: "Thermal Printer LX-D2 57mm 203 DPI"
-*ShortNickName: "Thermal57mm203DPI"
+*ModelName: "Thermal Printer LX-D02 203 DPI"
+*Product: "(Thermal Printer LX-D02 203 DPI)"
+*NickName: "Thermal Printer LX-D02 58mm 203 DPI"
+*ShortNickName: "LX-D02Thermal203DPI"
 
 *PCFileName: "LX-D02.ppd"
 *ColorDevice: False
@@ -19,31 +19,31 @@
 *FileSystem: False
 *Throughput: "5"
 *LandscapeOrientation: Plus90
-*%%% cupsFilter: "application/vnd.cups-raster 50 rastertolabel"
+*cupsFilter: "application/vnd.cups-pdf 0 -"
 
 
-*% Custom Paper Size (57 mm width, 47.7 mm printable area)
+*% Custom Paper Size (58 mm media, 48.05 mm printable width)
 *OpenUI *PageSize: PickOne
-*PageSize Label58x40mm/58mm x 40mm Label WB/Ozon: "<</PageSize [384 320]>>setpagedevice"
-*PageSize Label58x32mm/58mm x 32mm Label: "<</PageSize [384 256]>>setpagedevice"
-*PageSize Label58x60mm/58mm x 60mm Label: "<</PageSize [384 480]>>setpagedevice"
-*PageSize Label58x100mm/58mm x 100mm Label: "<</PageSize [384 800]>>setpagedevice"
+*PageSize Label58x40mm/58mm x 40mm Label WB/Ozon: "<</PageSize [136.20 113.39]>>setpagedevice"
+*PageSize Label58x32mm/58mm x 32mm Label: "<</PageSize [136.20 90.71]>>setpagedevice"
+*PageSize Label58x60mm/58mm x 60mm Label: "<</PageSize [136.20 170.08]>>setpagedevice"
+*PageSize Label58x100mm/58mm x 100mm Label: "<</PageSize [136.20 283.46]>>setpagedevice"
 *CloseUI: *PageSize
 
 *DefaultPageSize: Label58x100mm
 
-*ImageableArea Label58x40mm: "0 0 384 320"
-*PaperDimension Label58x40mm: "384 320"
-*PageRegion Label58x40mm: "0 0 384 320"
-*ImageableArea Label58x32mm: "0 0 384 256"
-*PaperDimension Label58x32mm: "384 256"
-*PageRegion Label58x32mm: "0 0 384 256"
-*ImageableArea Label58x60mm: "0 0 384 480"
-*PaperDimension Label58x60mm: "384 480"
-*PageRegion Label58x60mm: "0 0 384 480"
-*ImageableArea Label58x100mm: "0 0 384 800"
-*PaperDimension Label58x100mm: "384 800"
-*PageRegion Label58x100mm: "0 0 384 800"
+*ImageableArea Label58x40mm: "0 0 136.20 113.39"
+*PaperDimension Label58x40mm: "136.20 113.39"
+*PageRegion Label58x40mm: "<</PageSize [136.20 113.39]>>setpagedevice"
+*ImageableArea Label58x32mm: "0 0 136.20 90.71"
+*PaperDimension Label58x32mm: "136.20 90.71"
+*PageRegion Label58x32mm: "<</PageSize [136.20 90.71]>>setpagedevice"
+*ImageableArea Label58x60mm: "0 0 136.20 170.08"
+*PaperDimension Label58x60mm: "136.20 170.08"
+*PageRegion Label58x60mm: "<</PageSize [136.20 170.08]>>setpagedevice"
+*ImageableArea Label58x100mm: "0 0 136.20 283.46"
+*PaperDimension Label58x100mm: "136.20 283.46"
+*PageRegion Label58x100mm: "<</PageSize [136.20 283.46]>>setpagedevice"
 
 
 *DefaultImageableArea: Label58x100mm
