@@ -23,7 +23,6 @@ type basePrinter struct {
 	ID       string
 	stateMu  sync.RWMutex
 	state    PrinterState // Printer state, e.g., idle, processing, stopped
-	jobMu    sync.Mutex
 	printMu  sync.Mutex
 	Drv      Driver
 	Filter   Filter
@@ -155,11 +154,6 @@ func (p *basePrinter) State() PrinterState {
 	p.stateMu.RLock()
 	defer p.stateMu.RUnlock()
 	return p.state
-}
-
-func (p *basePrinter) lockJob() func() {
-	p.jobMu.Lock()
-	return p.jobMu.Unlock
 }
 
 func (p *basePrinter) Ready() bool {

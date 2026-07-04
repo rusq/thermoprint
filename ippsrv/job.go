@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
-	"reflect"
 	"sync"
 	"time"
 
@@ -119,46 +118,6 @@ var jobFsmEvts = []fsm.EventDesc{
 	},
 }
 
-var printerJobLocks sync.Map // fallback locks for non-basePrinter implementations, keyed by instance.
-
-type jobLocker interface {
-	lockJob() func()
-}
-
-type printerJobLockKey struct {
-	typ reflect.Type
-	ptr uintptr
-	val any
-}
-
-func lockPrinterJob(p Printer) func() {
-	if p, ok := p.(jobLocker); ok {
-		return p.lockJob()
-	}
-	key, ok := printerJobLockKeyFor(p)
-	if !ok {
-		return func() {}
-	}
-	lock, _ := printerJobLocks.LoadOrStore(key, &sync.Mutex{})
-	mu := lock.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
-}
-
-func printerJobLockKeyFor(p Printer) (printerJobLockKey, bool) {
-	v := reflect.ValueOf(p)
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return printerJobLockKey{}, false
-		}
-		return printerJobLockKey{typ: v.Type(), ptr: v.Pointer()}, true
-	}
-	if v.Type().Comparable() {
-		return printerJobLockKey{typ: v.Type(), val: p}, true
-	}
-	return printerJobLockKey{typ: v.Type(), val: p.Name()}, true
-}
-
 // JobStateReason represents the reason for the current job state.
 // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.8
 // RFC2911 obsoleted by RFC8011.
@@ -245,28 +204,16 @@ func makeJobFSM(j *Job) *fsm.FSM {
 		fsm.Callbacks{
 			jobEvtHeld: func(ctx context.Context, e *fsm.Event) {
 				lg.InfoContext(ctx, "Job held")
-				j.mu.Lock()
-				j.State = JobPendingHeld
-				if len(e.Args) > 0 {
-					j.StateReasons = reasonsFromArgs(e.Args...)
-				} else {
-					j.StateReasons = []JobStateReason{JSRJobHeldUntilSpecified}
-				}
-				j.mu.Unlock()
+				j.setState(JobPendingHeld, e.Args, JSRJobHeldUntilSpecified)
 			},
 			jobEvtResume: func(ctx context.Context, e *fsm.Event) {
 				lg.InfoContext(ctx, "Job resumed")
-				j.mu.Lock()
-				j.State = JobPending
-				j.mu.Unlock()
+				j.setState(JobPending, nil)
 			},
 			jobEvtProcess: func(ctx context.Context, e *fsm.Event) {
 				lg.InfoContext(ctx, "Job processing started")
 
-				j.mu.Lock()
-				j.State = JobProcessing
-				j.StateReasons = []JobStateReason{JSRJobPrinting, JSRJobTransforming}
-				j.mu.Unlock()
+				j.setState(JobProcessing, nil, JSRJobPrinting, JSRJobTransforming)
 
 				// args should contain the data to print
 				if len(e.Args) == 0 {
@@ -296,9 +243,8 @@ func makeJobFSM(j *Job) *fsm.FSM {
 
 				}
 
-				unlockPrinter := lockPrinterJob(j.Printer)
-				defer unlockPrinter()
-
+				// Concurrent jobs for the same printer are serialised by the
+				// spool (see spool.lockPrinter).
 				j.Printer.SetState(PSProcessing) // Set the printer state to processing
 				j.mu.Lock()
 				j.Processing = time.Now() // Set the processing time to now
@@ -326,47 +272,40 @@ func makeJobFSM(j *Job) *fsm.FSM {
 			},
 			jobEvtStop: func(ctx context.Context, e *fsm.Event) {
 				lg.InfoContext(ctx, "Job processing stopped")
-				j.mu.Lock()
-				j.State = JobProcessingStopped
-				if len(e.Args) > 0 {
-					j.StateReasons = reasonsFromArgs(e.Args...)
-				} else {
-					j.StateReasons = []JobStateReason{JSRProcessingToStopPoint}
-				}
-				j.mu.Unlock()
+				j.setState(JobProcessingStopped, e.Args, JSRProcessingToStopPoint)
 			},
 			jobEvtAbort: func(ctx context.Context, e *fsm.Event) {
 				lg.InfoContext(ctx, "Job aborted")
-				j.mu.Lock()
-				j.State = JobAborted
-				if len(e.Args) > 0 {
-					j.StateReasons = reasonsFromArgs(e.Args...)
-				} else {
-					j.StateReasons = []JobStateReason{JSRAbortedBySystem}
-				}
-				j.mu.Unlock()
+				j.setState(JobAborted, e.Args, JSRAbortedBySystem)
 			},
 			jobEvtComplete: func(ctx context.Context, e *fsm.Event) {
 				lg.InfoContext(ctx, "Job completed")
-				j.mu.Lock()
-				j.State = JobCompleted
-				j.StateReasons = []JobStateReason{JSRJobCompletedSuccessfully}
-				j.Completed = time.Now() // Set the completion time to now
-				j.mu.Unlock()
+				j.setState(JobCompleted, nil, JSRJobCompletedSuccessfully)
 			},
 			jobEvtCancel: func(ctx context.Context, e *fsm.Event) {
 				lg.InfoContext(ctx, "Job cancelled")
-				j.mu.Lock()
-				j.State = JobCancelled
-				if len(e.Args) > 0 {
-					j.StateReasons = reasonsFromArgs(e.Args...)
-				} else {
-					j.StateReasons = []JobStateReason{JSRJobCancelledByUser}
-				}
-				j.mu.Unlock()
+				j.setState(JobCancelled, e.Args, JSRJobCancelledByUser)
 			},
 		},
 	)
+}
+
+// setState transitions the job into state under the job lock. State reasons
+// are taken from args (the fsm event arguments), falling back to fallback
+// when args carry none; when both are empty the current reasons are kept.
+// Reaching a terminal state records the completion time.
+func (j *Job) setState(state JobState, args []any, fallback ...JobStateReason) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.State = state
+	if reasons := reasonsFromArgs(args...); len(reasons) > 0 {
+		j.StateReasons = reasons
+	} else if len(fallback) > 0 {
+		j.StateReasons = fallback
+	}
+	if isCompletedState(state) {
+		j.Completed = time.Now()
+	}
 }
 
 func reasonsFromArgs(args ...interface{}) []JobStateReason {
@@ -390,12 +329,23 @@ func (j *Job) attributes() goipp.Attributes {
 
 	attrs := goipp.Attributes{}
 	a := adder(&attrs)
-	addTime := func(name string, t time.Time) {
+	upTime := j.Printer.UpTime()
+	now := time.Now()
+	// time-at-* are integers in seconds since printer power-up, dateTime
+	// values go into the date-time-at-* counterparts.
+	// https://datatracker.ietf.org/doc/html/rfc8011#section-5.3.14
+	addTime := func(event string, t time.Time) {
 		if t.IsZero() {
-			a(name, goipp.TagNoValue, goipp.Void{})
+			a("time-at-"+event, goipp.TagNoValue, goipp.Void{})
+			a("date-time-at-"+event, goipp.TagNoValue, goipp.Void{})
 			return
 		}
-		a(name, goipp.TagDateTime, goipp.Time{Time: t})
+		secs := upTime - int(now.Sub(t).Seconds())
+		if secs < 0 {
+			secs = 0
+		}
+		a("time-at-"+event, goipp.TagInteger, goipp.Integer(secs))
+		a("date-time-at-"+event, goipp.TagDateTime, goipp.Time{Time: t})
 	}
 
 	a("job-id", goipp.TagInteger, goipp.Integer(j.ID))
@@ -405,10 +355,10 @@ func (j *Job) attributes() goipp.Attributes {
 	a("job-state-reasons", goipp.TagKeyword, stringsToValues(j.StateReasons)...)
 	a("job-printer-uri", goipp.TagURI, goipp.String(j.PrinterURI))
 	a("job-originating-user-name", goipp.TagName, goipp.String(j.Username))
-	addTime("time-at-creation", j.Created)
-	addTime("time-at-processing", j.Processing)
-	addTime("time-at-completed", j.Completed)                                     // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.3
-	a("job-printer-up-time", goipp.TagInteger, goipp.Integer(j.Printer.UpTime())) // https: //datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.4
+	addTime("creation", j.Created)
+	addTime("processing", j.Processing)
+	addTime("completed", j.Completed)                                 // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.3
+	a("job-printer-up-time", goipp.TagInteger, goipp.Integer(upTime)) // https: //datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.4
 	return attrs
 }
 

@@ -376,3 +376,69 @@ func TestIPPStatusFromErrorDefaultsToInternal(t *testing.T) {
 		t.Fatalf("ippStatusFromError = %v, want %v", got, goipp.StatusErrorInternal)
 	}
 }
+
+func TestHandleGetJobsEmptyQueueReturnsOK(t *testing.T) {
+	s := newTestIPPServer(t)
+	req := newIPPRequest(goipp.OpGetJobs, testRequestID)
+
+	resp, err := s.handleGetJobs(context.Background(), req, nil)
+	if err != nil {
+		t.Fatalf("handleGetJobs: %v", err)
+	}
+	assertResponse(t, resp, req.RequestID, goipp.StatusOk)
+	groups := resp.AttrGroups()
+	if len(groups) != 1 {
+		t.Fatalf("len(AttrGroups()) = %d, want 1", len(groups))
+	}
+	if groups[0].Tag != goipp.TagOperationGroup {
+		t.Fatalf("groups[0].Tag = %v, want %v", groups[0].Tag, goipp.TagOperationGroup)
+	}
+}
+
+func TestJobAttributesTimeSyntax(t *testing.T) {
+	s := newTestIPPServer(t)
+	job := addTestJob(t, s, 42, "test-job", "tester")
+
+	attrs := job.attributes()
+	for _, name := range []string{"time-at-creation", "time-at-processing", "time-at-completed"} {
+		vv, ok := findAttr(attrs, name)
+		if !ok {
+			t.Fatalf("missing %s attribute", name)
+		}
+		if vv[0].T != goipp.TagInteger {
+			t.Fatalf("%s tag = %v, want %v", name, vv[0].T, goipp.TagInteger)
+		}
+		if secs, ok := vv[0].V.(goipp.Integer); !ok || secs < 0 {
+			t.Fatalf("%s value = %v (%T), want non-negative goipp.Integer", name, vv[0].V, vv[0].V)
+		}
+	}
+	for _, name := range []string{"date-time-at-creation", "date-time-at-processing", "date-time-at-completed"} {
+		vv, ok := findAttr(attrs, name)
+		if !ok {
+			t.Fatalf("missing %s attribute", name)
+		}
+		if vv[0].T != goipp.TagDateTime {
+			t.Fatalf("%s tag = %v, want %v", name, vv[0].T, goipp.TagDateTime)
+		}
+	}
+}
+
+func TestJobAttributesZeroTimeIsNoValue(t *testing.T) {
+	s := newTestIPPServer(t)
+	p := s.Printer["test-printer"]
+	job, err := createJob(p, 42, "ipp://localhost/printers/test-printer", "/printers/test-printer/42", "test-job", "tester")
+	if err != nil {
+		t.Fatalf("createJob: %v", err)
+	}
+
+	attrs := job.attributes()
+	for _, name := range []string{"time-at-processing", "date-time-at-processing"} {
+		vv, ok := findAttr(attrs, name)
+		if !ok {
+			t.Fatalf("missing %s attribute", name)
+		}
+		if vv[0].T != goipp.TagNoValue {
+			t.Fatalf("%s tag = %v, want %v", name, vv[0].T, goipp.TagNoValue)
+		}
+	}
+}
