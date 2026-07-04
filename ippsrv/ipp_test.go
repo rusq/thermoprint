@@ -143,6 +143,44 @@ func TestHandleGetJobAttributesEchoesRequestID(t *testing.T) {
 	}
 }
 
+func TestHandlePrintJobReturnsJobAttributes(t *testing.T) {
+	s := newTestIPPServer(t)
+	req := newIPPRequest(goipp.OpPrintJob, testRequestID)
+	a := adder(&req.Operation)
+	a("job-name", goipp.TagName, goipp.String("test-job"))
+	a("requesting-user-name", goipp.TagName, goipp.String("tester"))
+
+	resp, err := s.handlePrintJob(context.Background(), req, tinyPNG(t))
+	if err != nil {
+		t.Fatalf("handlePrintJob: %v", err)
+	}
+	if resp.RequestID != req.RequestID {
+		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
+	}
+	if resp.Code != goipp.Code(goipp.StatusOk) {
+		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
+	}
+	if _, ok := findAttr(resp.Operation, "attributes-charset"); !ok {
+		t.Fatal("missing attributes-charset operation attribute")
+	}
+	if _, ok := findAttr(resp.Operation, "attributes-natural-language"); !ok {
+		t.Fatal("missing attributes-natural-language operation attribute")
+	}
+
+	jobID, err := extractValue[goipp.Integer](resp.Job, "job-id")
+	if err != nil {
+		t.Fatalf("job-id: %v", err)
+	}
+	if _, err := s.spool.GetJob(JobID(jobID)); err != nil {
+		t.Fatalf("spooled job %d: %v", jobID, err)
+	}
+	for _, name := range []string{"job-uri", "job-state", "job-state-reasons"} {
+		if _, ok := findAttr(resp.Job, name); !ok {
+			t.Fatalf("missing %s job attribute", name)
+		}
+	}
+}
+
 func TestServeIPPUnsupportedOperationReturnsIPPError(t *testing.T) {
 	s := newTestIPPServer(t)
 	req := newIPPRequest(goipp.Op(0x1234), testRequestID)

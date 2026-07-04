@@ -218,7 +218,9 @@ func (ih *basicIPPServer) handlePrintJob(ctx context.Context, req *goipp.Message
 	if err := ih.spool.AddJob(ctx, j, body); err != nil {
 		return nil, fmt.Errorf("failed to add job to spool: %w", err)
 	}
-	return baseResponse(goipp.StatusOk, req.RequestID), nil
+	resp = baseResponse(goipp.StatusOk, req.RequestID)
+	resp.Job = j.attributes()
+	return resp, nil
 }
 
 func asString(vv goipp.Values, ok bool) (string, bool) {

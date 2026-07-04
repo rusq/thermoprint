@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
-	"slices"
 	"sync"
 	"time"
 
@@ -30,13 +29,6 @@ type Job struct {
 
 	sm     *fsm.FSM
 	buffer []byte // Buffer for job data, if needed
-}
-
-type jobStateSnapshot struct {
-	State        JobState
-	StateReasons []JobStateReason
-	Processing   time.Time
-	Completed    time.Time
 }
 
 type JobID int32
@@ -124,6 +116,15 @@ var jobFsmEvts = []fsm.EventDesc{
 		},
 		Dst: JobAborted.String(),
 	},
+}
+
+var printerJobLocks sync.Map
+
+func lockPrinterJob(p Printer) func() {
+	lock, _ := printerJobLocks.LoadOrStore(p.Name(), &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // JobStateReason represents the reason for the current job state.
@@ -263,6 +264,9 @@ func makeJobFSM(j *Job) *fsm.FSM {
 
 				}
 
+				unlockPrinter := lockPrinterJob(j.Printer)
+				defer unlockPrinter()
+
 				j.Printer.SetState(PSProcessing) // Set the printer state to processing
 				j.mu.Lock()
 				j.Processing = time.Now() // Set the processing time to now
@@ -349,7 +353,9 @@ func reasonsFromArgs(args ...interface{}) []JobStateReason {
 // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3 , and
 // https://datatracker.ietf.org/doc/html/rfc3380
 func (j *Job) attributes() goipp.Attributes {
-	state := j.stateSnapshot()
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+
 	noValue := goipp.String("no-value")
 
 	nulltime := func(t time.Time) goipp.Value {
@@ -364,31 +370,24 @@ func (j *Job) attributes() goipp.Attributes {
 	a("job-id", goipp.TagInteger, goipp.Integer(j.ID))
 	a("job-name", goipp.TagName, goipp.String(j.Name))
 	a("job-uri", goipp.TagURI, goipp.String(j.JobURI))
-	a("job-state", goipp.TagEnum, goipp.Integer(state.State))
-	a("job-state-reasons", goipp.TagKeyword, stringsToValues(state.StateReasons)...)
+	a("job-state", goipp.TagEnum, goipp.Integer(j.State))
+	a("job-state-reasons", goipp.TagKeyword, stringsToValues(j.StateReasons)...)
 	a("job-printer-uri", goipp.TagURI, goipp.String(j.PrinterURI))
 	a("job-originating-user-name", goipp.TagName, goipp.String(j.Username))
 	a("time-at-creation", goipp.TagDateTime, nulltime(j.Created))
-	a("time-at-processing", goipp.TagDateTime, nulltime(state.Processing))
-	a("time-at-completed", goipp.TagDateTime, nulltime(state.Completed))          // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.3
+	a("time-at-processing", goipp.TagDateTime, nulltime(j.Processing))
+	a("time-at-completed", goipp.TagDateTime, nulltime(j.Completed))              // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.3
 	a("job-printer-up-time", goipp.TagInteger, goipp.Integer(j.Printer.UpTime())) // https: //datatracker.ietf.org/doc/html/rfc2911#section-4.3.14.4
 	return attrs
 }
 
-func (j *Job) reasons() []goipp.Value {
-	j.mu.RLock()
-	defer j.mu.RUnlock()
-	return stringsToValues(j.StateReasons)
-}
-
 func (j *Job) IsCompleted() bool {
-	state := j.state()
-	return state == JobCompleted || state == JobCancelled || state == JobAborted
+	return isCompletedState(j.state())
 }
 
 func (j *Job) IsActive() bool {
 	state := j.state()
-	return state != JobCompleted && state != JobCancelled && state != JobAborted && state != JobPending
+	return !isCompletedState(state) && state != JobPending
 }
 
 func (j *Job) state() JobState {
@@ -397,13 +396,6 @@ func (j *Job) state() JobState {
 	return j.State
 }
 
-func (j *Job) stateSnapshot() jobStateSnapshot {
-	j.mu.RLock()
-	defer j.mu.RUnlock()
-	return jobStateSnapshot{
-		State:        j.State,
-		StateReasons: slices.Clone(j.StateReasons),
-		Processing:   j.Processing,
-		Completed:    j.Completed,
-	}
+func isCompletedState(state JobState) bool {
+	return state == JobCompleted || state == JobCancelled || state == JobAborted
 }

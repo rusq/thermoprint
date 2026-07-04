@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,7 +21,9 @@ var startTime = time.Now()
 type basePrinter struct {
 	Fullname string
 	ID       string
+	stateMu  sync.RWMutex
 	state    PrinterState // Printer state, e.g., idle, processing, stopped
+	printMu  sync.Mutex
 	Drv      Driver
 	Filter   Filter
 }
@@ -148,6 +151,8 @@ const (
 )
 
 func (p *basePrinter) State() PrinterState {
+	p.stateMu.RLock()
+	defer p.stateMu.RUnlock()
 	return p.state
 }
 
@@ -187,6 +192,9 @@ var (
 )
 
 func (p *basePrinter) Print(ctx context.Context, data []byte) error {
+	p.printMu.Lock()
+	defer p.printMu.Unlock()
+
 	if p.Drv == nil {
 		return ErrNoDriver
 	}
@@ -229,5 +237,7 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 }
 
 func (p *basePrinter) SetState(state PrinterState) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
 	p.state = state
 }

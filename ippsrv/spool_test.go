@@ -152,6 +152,79 @@ func TestSpoolAddJobDoesNotHoldSpoolLockWhilePrinting(t *testing.T) {
 	}
 }
 
+func TestPrinterSerializesConcurrentJobs(t *testing.T) {
+	sp, err := newSpool(t.TempDir())
+	if err != nil {
+		t.Fatalf("newSpool: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sp.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	})
+
+	driver := &serialBlockingDriver{
+		entered: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	printer, err := WrapDriver(driver, "test-printer", "Test Printer")
+	if err != nil {
+		t.Fatalf("WrapDriver: %v", err)
+	}
+	job1, err := createJob(printer, 42, "ipp://localhost/printers/test-printer", "/printers/test-printer/42", "test-job-1", "tester")
+	if err != nil {
+		t.Fatalf("createJob job1: %v", err)
+	}
+	job2, err := createJob(printer, 43, "ipp://localhost/printers/test-printer", "/printers/test-printer/43", "test-job-2", "tester")
+	if err != nil {
+		t.Fatalf("createJob job2: %v", err)
+	}
+	data := tinyPNG(t)
+
+	addErr1 := make(chan error, 1)
+	go func() {
+		addErr1 <- sp.AddJob(context.Background(), job1, data)
+	}()
+
+	select {
+	case <-driver.entered:
+	case err := <-addErr1:
+		t.Fatalf("first AddJob returned before printing started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first print to start")
+	}
+
+	addErr2 := make(chan error, 1)
+	go func() {
+		addErr2 <- sp.AddJob(context.Background(), job2, data)
+	}()
+
+	select {
+	case <-driver.entered:
+		t.Fatal("second print started before first print was released")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(driver.release)
+
+	select {
+	case err := <-addErr1:
+		if err != nil {
+			t.Fatalf("first AddJob: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first AddJob to finish")
+	}
+	select {
+	case err := <-addErr2:
+		if err != nil {
+			t.Fatalf("second AddJob: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second AddJob to finish")
+	}
+}
+
 type blockingDriver struct {
 	started chan<- struct{}
 	release <-chan struct{}
@@ -169,6 +242,24 @@ func (d blockingDriver) PrintImage(ctx context.Context, img image.Image) error {
 }
 func (blockingDriver) DPI() float64 { return 203 }
 func (blockingDriver) Width() int   { return 384 }
+
+type serialBlockingDriver struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (serialBlockingDriver) SetOptions(opt ...thermoprint.Option) error { return nil }
+func (d *serialBlockingDriver) PrintImage(ctx context.Context, img image.Image) error {
+	d.entered <- struct{}{}
+	select {
+	case <-d.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (serialBlockingDriver) DPI() float64 { return 203 }
+func (serialBlockingDriver) Width() int   { return 384 }
 
 func tinyPNG(t *testing.T) []byte {
 	t.Helper()

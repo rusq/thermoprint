@@ -173,32 +173,32 @@ func (s *spool) AddJob(ctx context.Context, job *Job, data []byte) error {
 		return errors.New("job printer cannot be nil")
 	}
 
-	s.mu.Lock()
+	if err := func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 
-	if err := s.addJobLocked(job); err != nil {
-		s.mu.Unlock()
-		return fmt.Errorf("failed to add job %d: %w", job.ID, err)
-	}
+		if err := s.addJobLocked(job); err != nil {
+			return fmt.Errorf("failed to add job %d: %w", job.ID, err)
+		}
 
-	jobFile := s.jobFilePath(job.ID)
-	f, err := os.Create(jobFile)
-	if err != nil {
-		s.mu.Unlock()
-		return fmt.Errorf("failed to create job file %s: %w", jobFile, err)
+		jobFile := s.jobFilePath(job.ID)
+		f, err := os.Create(jobFile)
+		if err != nil {
+			return fmt.Errorf("failed to create job file %s: %w", jobFile, err)
+		}
+		// Write the job data to the file
+		if _, err := f.Write(data); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("failed to write job data to file %s: %w", jobFile, err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("failed to close job file %s: %w", jobFile, err)
+		}
+		slog.Info("job added", "job_id", job.ID, "printer", job.Printer.Name(), "file", jobFile)
+		return nil
+	}(); err != nil {
+		return err
 	}
-	// Write the job data to the file
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		s.mu.Unlock()
-		return fmt.Errorf("failed to write job data to file %s: %w", jobFile, err)
-	}
-	if err := f.Close(); err != nil {
-		s.mu.Unlock()
-		return fmt.Errorf("failed to close job file %s: %w", jobFile, err)
-	}
-	slog.Info("job added", "job_id", job.ID, "printer", job.Printer.Name(), "file", jobFile)
-
-	s.mu.Unlock()
 
 	return job.sm.Event(ctx, jobEvtProcess, data)
 }
