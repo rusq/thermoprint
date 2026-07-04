@@ -8,6 +8,7 @@ package ippsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -36,6 +37,37 @@ type IPPHandlerFunc func(ctx context.Context, req *goipp.Message, body []byte) (
 
 func (f IPPHandlerFunc) ServeIPP(ctx context.Context, req *goipp.Message, body []byte) (resp *goipp.Message, err error) {
 	return f(ctx, req, body)
+}
+
+type ippStatusError struct {
+	status goipp.Status
+	err    error
+}
+
+func (e ippStatusError) Error() string {
+	return e.err.Error()
+}
+
+func (e ippStatusError) Unwrap() error {
+	return e.err
+}
+
+func ippError(status goipp.Status, format string, args ...any) error {
+	return ippStatusError{
+		status: status,
+		err:    fmt.Errorf(format, args...),
+	}
+}
+
+func ippStatusFromError(err error) goipp.Status {
+	var statusErr ippStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.status
+	}
+	if errors.Is(err, errJobNotFound) {
+		return goipp.StatusErrorNotFound
+	}
+	return goipp.StatusErrorInternal
 }
 
 func newBasicIPPServer(baseURL string, pp ...Printer) (*basicIPPServer, error) {
@@ -97,7 +129,13 @@ func (ih *basicIPPServer) ServeIPP(ctx context.Context, req *goipp.Message, body
 		return baseResponse(goipp.StatusErrorOperationNotSupported, req.RequestID), nil
 	}
 	slog.Debug("ipp request", "code", req.Code, "request_id", req.RequestID)
-	return next(ctx, req, body)
+	resp, err = next(ctx, req, body)
+	if err != nil {
+		status := ippStatusFromError(err)
+		lg.Error("failed to handle IPP request", "error", err, "status", status)
+		return baseResponse(status, req.RequestID), nil
+	}
+	return resp, nil
 }
 
 func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32) *goipp.Message {
@@ -155,30 +193,30 @@ func (ih *basicIPPServer) handleGetPrinterAttributes(ctx context.Context, req *g
 func (ih *basicIPPServer) printerFromRequest(req *goipp.Message) (Printer, error) {
 	strName, err := extractValue[goipp.String](req.Operation, "printer-uri")
 	if err != nil {
-		return nil, err
+		return nil, ippError(goipp.StatusErrorBadRequest, "invalid printer-uri: %w", err)
 	}
 	printerURI := strName.String()
 	if printerURI == "" {
-		return nil, fmt.Errorf("printer-uri is empty in request")
+		return nil, ippError(goipp.StatusErrorBadRequest, "printer-uri is empty in request")
 	}
 	uri, err := url.Parse(printerURI)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse printer-uri %q: %w", printerURI, err)
+		return nil, ippError(goipp.StatusErrorBadRequest, "failed to parse printer-uri %q: %w", printerURI, err)
 	}
 	if uri.Scheme != "ipp" && uri.Scheme != "ipps" {
-		return nil, fmt.Errorf("printer-uri %q has unsupported scheme %q, expected 'ipp' or 'ipps'", printerURI, uri.Scheme)
+		return nil, ippError(goipp.StatusErrorBadRequest, "printer-uri %q has unsupported scheme %q, expected 'ipp' or 'ipps'", printerURI, uri.Scheme)
 	}
 	// Extract the printer name from the URI path
 	printerName := strings.TrimPrefix(uri.Path, ih.baseURL)
 	if printerName == "" || printerName == "/" {
-		return nil, fmt.Errorf("printer-uri %q has no printer name in path", printerURI)
+		return nil, ippError(goipp.StatusErrorBadRequest, "printer-uri %q has no printer name in path", printerURI)
 	}
 	slog.Debug("printer URI parsed", "printer_name", printerName, "uri", printerURI)
 
 	if p, ok := ih.Printer[printerName]; ok {
 		return p, nil
 	}
-	return nil, fmt.Errorf("printer %q not found", printerURI)
+	return nil, ippError(goipp.StatusErrorNotFound, "printer %q not found", printerURI)
 }
 
 func (ih *basicIPPServer) handleWithBaseResponse(ctx context.Context, req *goipp.Message, _ []byte) (resp *goipp.Message, err error) {
@@ -189,11 +227,11 @@ func (ih *basicIPPServer) handleGetJobAttributes(ctx context.Context, req *goipp
 	// find job id in operation attributes
 	v, err := extractValue[goipp.Integer](req.Operation, "job-id")
 	if err != nil {
-		return resp, fmt.Errorf("failed to extract job-id: %w", err)
+		return resp, ippError(goipp.StatusErrorBadRequest, "failed to extract job-id: %w", err)
 	}
 	jobID := JobID(v)
 	if jobID == 0 {
-		return nil, fmt.Errorf("job-id not provided in request")
+		return nil, ippError(goipp.StatusErrorBadRequest, "job-id not provided in request")
 	}
 	job, err := ih.spool.GetJob(jobID)
 	if err != nil {

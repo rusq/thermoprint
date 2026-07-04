@@ -2,6 +2,7 @@ package ippsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"testing"
@@ -48,6 +49,16 @@ func newIPPRequest(op goipp.Op, requestID uint32) *goipp.Message {
 	a("attributes-natural-language", goipp.TagLanguage, ippENUS)
 	a("printer-uri", goipp.TagURI, goipp.String("ipp://localhost/printers/test-printer"))
 	return req
+}
+
+func removeOperationAttr(req *goipp.Message, name string) {
+	filtered := req.Operation[:0]
+	for _, attr := range req.Operation {
+		if attr.Name != name {
+			filtered = append(filtered, attr)
+		}
+	}
+	req.Operation = filtered
 }
 
 func addTestJob(t *testing.T, s *basicIPPServer, id JobID, name, username string) *Job {
@@ -314,5 +325,82 @@ func TestServeIPPUnsupportedOperationReturnsIPPError(t *testing.T) {
 	}
 	if resp.Code != goipp.Code(goipp.StatusErrorOperationNotSupported) {
 		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusErrorOperationNotSupported))
+	}
+}
+
+func TestServeIPPMapsClientErrorsToIPPStatus(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		op     goipp.Op
+		mutate func(*goipp.Message)
+		want   goipp.Status
+	}{
+		{
+			name: "missing job-id is bad request",
+			op:   goipp.OpGetJobAttributes,
+			want: goipp.StatusErrorBadRequest,
+		},
+		{
+			name: "unknown job is not found",
+			op:   goipp.OpGetJobAttributes,
+			mutate: func(req *goipp.Message) {
+				a := adder(&req.Operation)
+				a("job-id", goipp.TagInteger, goipp.Integer(404))
+			},
+			want: goipp.StatusErrorNotFound,
+		},
+		{
+			name: "missing printer-uri is bad request",
+			op:   goipp.OpGetPrinterAttributes,
+			mutate: func(req *goipp.Message) {
+				removeOperationAttr(req, "printer-uri")
+			},
+			want: goipp.StatusErrorBadRequest,
+		},
+		{
+			name: "malformed printer-uri is bad request",
+			op:   goipp.OpGetPrinterAttributes,
+			mutate: func(req *goipp.Message) {
+				removeOperationAttr(req, "printer-uri")
+				a := adder(&req.Operation)
+				a("printer-uri", goipp.TagURI, goipp.String("%"))
+			},
+			want: goipp.StatusErrorBadRequest,
+		},
+		{
+			name: "unknown printer is not found",
+			op:   goipp.OpGetPrinterAttributes,
+			mutate: func(req *goipp.Message) {
+				removeOperationAttr(req, "printer-uri")
+				a := adder(&req.Operation)
+				a("printer-uri", goipp.TagURI, goipp.String("ipp://localhost/printers/missing"))
+			},
+			want: goipp.StatusErrorNotFound,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestIPPServer(t)
+			req := newIPPRequest(tt.op, testRequestID)
+			if tt.mutate != nil {
+				tt.mutate(req)
+			}
+
+			resp, err := s.ServeIPP(context.Background(), req, nil)
+			if err != nil {
+				t.Fatalf("ServeIPP: %v", err)
+			}
+			if resp.RequestID != req.RequestID {
+				t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
+			}
+			if resp.Code != goipp.Code(tt.want) {
+				t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(tt.want))
+			}
+		})
+	}
+}
+
+func TestIPPStatusFromErrorDefaultsToInternal(t *testing.T) {
+	if got := ippStatusFromError(errors.New("boom")); got != goipp.StatusErrorInternal {
+		t.Fatalf("ippStatusFromError = %v, want %v", got, goipp.StatusErrorInternal)
 	}
 }

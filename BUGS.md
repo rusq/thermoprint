@@ -96,7 +96,7 @@ Proposed fix: build the response via `resp.Groups`, starting with the operation 
 
 References: `ippsrv/ipp.go` (`handleGetJobs`), `ippsrv/job.go`.
 
-## [P2] Client-caused failures are reported as server-error-internal-error
+## [DONE] [P2] Client-caused failures are reported as server-error-internal-error
 
 All handler errors funnel through a single mapping in `handlePrint` that encodes `goipp.StatusErrorInternal`. Client mistakes — missing `job-id`, unknown job (the `errJobNotFound` sentinel already exists), unknown printer, malformed `printer-uri` — should encode `client-error-bad-request` or `client-error-not-found`. Clients treat the 0x05xx class as a retryable server fault, so they retry or mark the printer failed instead of surfacing the user's error.
 
