@@ -104,7 +104,7 @@ Proposed fix: let handlers express a status, e.g. a typed error carrying a `goip
 
 References: `ippsrv/http.go`, `ippsrv/ipp.go`, `ippsrv/spool.go`.
 
-## [P3] Error-path encode failure is not logged; test assertions duplicated
+## [DONE] [P3] Error-path encode failure is not logged; test assertions duplicated
 
 In `handlePrint`, the error returned by `baseResponse(...).Encode(w)` on the ServeIPP-error path is discarded, while the success path four lines below logs encode failures. Separately, `ipp_test.go` copy-pastes the same RequestID/status assertion pair into four tests, comparing via `goipp.Code` (raw uint16 in failure output) instead of `goipp.Status` (which has a `String()` yielding RFC 8010 names).
 

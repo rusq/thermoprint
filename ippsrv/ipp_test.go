@@ -83,11 +83,20 @@ func addTestJob(t *testing.T, s *basicIPPServer, id JobID, name, username string
 	return job
 }
 
+func assertResponse(t *testing.T, resp *goipp.Message, wantID uint32, wantStatus goipp.Status) {
+	t.Helper()
+
+	if resp.RequestID != wantID {
+		t.Fatalf("RequestID = %d, want %d", resp.RequestID, wantID)
+	}
+	if got := goipp.Status(resp.Code); got != wantStatus {
+		t.Fatalf("Status = %v, want %v", got, wantStatus)
+	}
+}
+
 func TestBaseResponseUsesRequestID(t *testing.T) {
 	resp := baseResponse(goipp.StatusOk, testRequestID)
-	if resp.RequestID != testRequestID {
-		t.Fatalf("RequestID = %d, want %d", resp.RequestID, testRequestID)
-	}
+	assertResponse(t, resp, testRequestID, goipp.StatusOk)
 }
 
 func TestBaseResponseUsesStatusCode(t *testing.T) {
@@ -100,9 +109,7 @@ func TestBaseResponseUsesStatusCode(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			resp := baseResponse(tt.status, testRequestID)
-			if resp.Code != goipp.Code(tt.status) {
-				t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(tt.status))
-			}
+			assertResponse(t, resp, testRequestID, tt.status)
 		})
 	}
 }
@@ -122,12 +129,7 @@ func TestHandleWithBaseResponseEchoesRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleWithBaseResponse: %v", err)
 	}
-	if resp.RequestID != req.RequestID {
-		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
-	}
-	if resp.Code != goipp.Code(goipp.StatusOk) {
-		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
-	}
+	assertResponse(t, resp, req.RequestID, goipp.StatusOk)
 }
 
 func TestHandleGetPrinterAttributesEchoesRequestID(t *testing.T) {
@@ -138,12 +140,7 @@ func TestHandleGetPrinterAttributesEchoesRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleGetPrinterAttributes: %v", err)
 	}
-	if resp.RequestID != req.RequestID {
-		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
-	}
-	if resp.Code != goipp.Code(goipp.StatusOk) {
-		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
-	}
+	assertResponse(t, resp, req.RequestID, goipp.StatusOk)
 }
 
 func TestHandleGetJobAttributesEchoesRequestID(t *testing.T) {
@@ -158,12 +155,7 @@ func TestHandleGetJobAttributesEchoesRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleGetJobAttributes: %v", err)
 	}
-	if resp.RequestID != req.RequestID {
-		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
-	}
-	if resp.Code != goipp.Code(goipp.StatusOk) {
-		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
-	}
+	assertResponse(t, resp, req.RequestID, goipp.StatusOk)
 	if _, ok := findAttr(resp.Operation, "attributes-charset"); !ok {
 		t.Fatal("missing attributes-charset operation attribute")
 	}
@@ -192,12 +184,7 @@ func TestHandleGetJobsReturnsSeparateJobGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleGetJobs: %v", err)
 	}
-	if resp.RequestID != req.RequestID {
-		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
-	}
-	if resp.Code != goipp.Code(goipp.StatusOk) {
-		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
-	}
+	assertResponse(t, resp, req.RequestID, goipp.StatusOk)
 	if _, ok := findAttr(resp.Operation, "attributes-charset"); !ok {
 		t.Fatal("missing attributes-charset operation attribute")
 	}
@@ -285,12 +272,7 @@ func TestHandlePrintJobReturnsJobAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlePrintJob: %v", err)
 	}
-	if resp.RequestID != req.RequestID {
-		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
-	}
-	if resp.Code != goipp.Code(goipp.StatusOk) {
-		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusOk))
-	}
+	assertResponse(t, resp, req.RequestID, goipp.StatusOk)
 	if _, ok := findAttr(resp.Operation, "attributes-charset"); !ok {
 		t.Fatal("missing attributes-charset operation attribute")
 	}
@@ -320,12 +302,7 @@ func TestServeIPPUnsupportedOperationReturnsIPPError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServeIPP: %v", err)
 	}
-	if resp.RequestID != req.RequestID {
-		t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
-	}
-	if resp.Code != goipp.Code(goipp.StatusErrorOperationNotSupported) {
-		t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(goipp.StatusErrorOperationNotSupported))
-	}
+	assertResponse(t, resp, req.RequestID, goipp.StatusErrorOperationNotSupported)
 }
 
 func TestServeIPPMapsClientErrorsToIPPStatus(t *testing.T) {
@@ -389,12 +366,7 @@ func TestServeIPPMapsClientErrorsToIPPStatus(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ServeIPP: %v", err)
 			}
-			if resp.RequestID != req.RequestID {
-				t.Fatalf("RequestID = %d, want %d", resp.RequestID, req.RequestID)
-			}
-			if resp.Code != goipp.Code(tt.want) {
-				t.Fatalf("Code = %v, want %v", resp.Code, goipp.Code(tt.want))
-			}
+			assertResponse(t, resp, req.RequestID, tt.want)
 		})
 	}
 }
