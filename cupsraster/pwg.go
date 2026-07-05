@@ -91,7 +91,14 @@ func parsePWGHeader(buf []byte) (pwgHeader, error) {
 
 // DecodePWG decodes a PWG Raster stream into one image per page.
 func DecodePWG(r io.Reader) ([]image.Image, error) {
-	br := bufio.NewReader(r)
+	pages, err := decodePWGPages(bufio.NewReader(r))
+	if err != nil {
+		return nil, err
+	}
+	return images(pages), nil
+}
+
+func decodePWGPages(br *bufio.Reader) ([]Page, error) {
 	sync := make([]byte, len(pwgSyncWord))
 	if _, err := io.ReadFull(br, sync); err != nil {
 		return nil, fmt.Errorf("reading sync word: %w", err)
@@ -99,7 +106,7 @@ func DecodePWG(r io.Reader) ([]image.Image, error) {
 	if string(sync) != pwgSyncWord {
 		return nil, fmt.Errorf("not a PWG raster stream: sync word %q", sync)
 	}
-	var pages []image.Image
+	var pages []Page
 	hdr := make([]byte, pwgHeaderSize)
 	for page := 1; ; page++ {
 		if _, err := io.ReadFull(br, hdr); err != nil {
@@ -119,7 +126,7 @@ func DecodePWG(r io.Reader) ([]image.Image, error) {
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", page, err)
 		}
-		pages = append(pages, img)
+		pages = append(pages, Page{Image: img, XDPI: h.XRes, YDPI: h.YRes})
 	}
 	if len(pages) == 0 {
 		return nil, errors.New("no pages in PWG raster stream")

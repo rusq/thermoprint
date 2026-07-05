@@ -57,6 +57,22 @@ func TestFixtures_PolarityAndConsistency(t *testing.T) {
 	pwg := loadFixture(t, "doc.pwg", FormatPWG)
 	urf := loadFixture(t, "doc.urf", FormatURF)
 
+	// the macOS cupsfilter fixtures are 100dpi (it ignores -o Resolution);
+	// the declared resolution must be surfaced so the printer can rescale.
+	for _, name := range []string{"doc.pwg", "doc.urf"} {
+		data, err := os.ReadFile("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages, err := DecodePages(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pages[0].XDPI != 100 || pages[0].YDPI != 100 {
+			t.Errorf("%s: declared resolution %dx%d, want 100x100", name, pages[0].XDPI, pages[0].YDPI)
+		}
+	}
+
 	if pwg.Bounds() != urf.Bounds() {
 		t.Fatalf("bounds differ: pwg %v, urf %v", pwg.Bounds(), urf.Bounds())
 	}

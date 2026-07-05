@@ -59,8 +59,26 @@ func Detect(data []byte) Format {
 	return FormatUnknown
 }
 
+// Page is a decoded raster page together with the resolution declared in
+// its header.  A consumer printing at a different resolution must scale the
+// image accordingly to preserve the physical size.
+type Page struct {
+	image.Image
+	XDPI, YDPI int
+}
+
 // Decode sniffs the stream format and decodes all pages.
 func Decode(r io.Reader) ([]image.Image, error) {
+	pages, err := DecodePages(r)
+	if err != nil {
+		return nil, err
+	}
+	return images(pages), nil
+}
+
+// DecodePages sniffs the stream format and decodes all pages with their
+// declared resolutions.
+func DecodePages(r io.Reader) ([]Page, error) {
 	br := bufio.NewReader(r)
 	head, err := br.Peek(len(pwgSyncWord) + len(pwgMagic))
 	if err != nil && len(head) == 0 {
@@ -68,11 +86,19 @@ func Decode(r io.Reader) ([]image.Image, error) {
 	}
 	switch Detect(head) {
 	case FormatPWG:
-		return DecodePWG(br)
+		return decodePWGPages(br)
 	case FormatURF:
-		return DecodeURF(br)
+		return decodeURFPages(br)
 	}
 	return nil, fmt.Errorf("unrecognised raster stream (header % x)", head)
+}
+
+func images(pages []Page) []image.Image {
+	imgs := make([]image.Image, len(pages))
+	for i, pg := range pages {
+		imgs[i] = pg.Image
+	}
+	return imgs
 }
 
 func checkDimensions(width, height int) error {

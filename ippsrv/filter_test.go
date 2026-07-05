@@ -77,3 +77,25 @@ func TestRasterSniffFilter_Type(t *testing.T) {
 	f := &rasterSniffFilter{fallback: &imageMagickFilter{}}
 	assert.Equal(t, "raster+ImageMagick", f.Type())
 }
+
+// A page declaring a lower resolution than the printer's must be scaled up,
+// or it prints undersized (a 100dpi page on the 203dpi head comes out at
+// half size).
+func TestRasterSniffFilter_ScalesToPrinterDPI(t *testing.T) {
+	pwg, err := os.ReadFile("../cupsraster/testdata/doc.pwg")
+	require.NoError(t, err) // fixture is 189x393 @ 100dpi
+
+	f := &rasterSniffFilter{fallback: &recordingFilter{}}
+	pages, err := f.ToRaster(context.Background(), 203, pwg)
+	require.NoError(t, err)
+	require.Len(t, pages, 1)
+
+	b := pages[0].Bounds()
+	assert.Equal(t, 384, b.Dx(), "width must be scaled from 100dpi to 203dpi")
+	assert.Equal(t, 798, b.Dy(), "height must be scaled from 100dpi to 203dpi")
+
+	// at the printer's native resolution the page must pass through unscaled
+	pages, err = f.ToRaster(context.Background(), 100, pwg)
+	require.NoError(t, err)
+	assert.Equal(t, 189, pages[0].Bounds().Dx(), "matching dpi must not rescale")
+}

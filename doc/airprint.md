@@ -52,6 +52,20 @@ paths.  Read this before touching `ippsrv/bonjour.go`, `ippsrv/airprint.go`,
   without it. We stay grayscale-only (`W8`) on purpose.
 - The `URF` TXT key and the `urf-supported` IPP attribute must agree — both
   come from `urfSupported()` in `ippsrv/bonjour.go`.
+- **Apple's `ipp2ppd` emits `*DefaultResolution` / `*cupsPrintQuality`
+  (HWResolution) only if `print-quality-supported` is advertised.** Without
+  it the generated AirPrint PPD has no resolution at all, `cgpdftoraster`
+  falls back to its built-in 100dpi, and printouts come out at half size on
+  the 203dpi head. Iterate on the generated PPD offline with:
+  `/System/Library/Printers/Libraries/ipp2ppd ipp://localhost:6310/printers/default
+  /System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/PrintCore.framework/Versions/A/Resources/AirPrint.ppd`
+  (no GUI re-adding needed). Existing queues keep their old generated PPD —
+  re-add the printer after changing advertised attributes.
+- As defence in depth the server honours the resolution declared in raster
+  page headers: `cupsraster.DecodePages` surfaces per-page DPI and
+  `scaleToDPI` (`ippsrv/filter.go`) rescales pages to the printer's DPI, so
+  even a client rasterising at the wrong resolution prints at the correct
+  physical size.
 
 ## Raster formats (cupsraster package)
 

@@ -193,6 +193,11 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printer
 	a("sides-default", goipp.TagKeyword, goipp.String("one-sided"))
 	a("copies-supported", goipp.TagRange, goipp.Range{Lower: 1, Upper: 1})
 	a("copies-default", goipp.TagInteger, goipp.Integer(1))
+	// print-quality drives the resolution entries in Apple's ipp2ppd
+	// AirPrint PPD generator: without it no *DefaultResolution is emitted
+	// and cgpdftoraster rasterises at 100dpi, printing at half size.
+	a("print-quality-supported", goipp.TagEnum, goipp.Integer(4)) // normal
+	a("print-quality-default", goipp.TagEnum, goipp.Integer(4))
 	a("printer-is-accepting-jobs", goipp.TagBoolean, goipp.Boolean(p.Ready()))
 	a("queued-job-count", goipp.TagInteger, goipp.Integer(ih.spool.GetJobCount(p.Name()))) // TODO: interrogate spooler for queued jobs for this printer
 	a("pdl-override-supported", goipp.TagKeyword, goipp.String("not-attempted"))

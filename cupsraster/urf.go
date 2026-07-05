@@ -61,7 +61,14 @@ func parseURFHeader(buf []byte) (urfHeader, error) {
 
 // DecodeURF decodes an Apple Raster (URF) stream into one image per page.
 func DecodeURF(r io.Reader) ([]image.Image, error) {
-	br := bufio.NewReader(r)
+	pages, err := decodeURFPages(bufio.NewReader(r))
+	if err != nil {
+		return nil, err
+	}
+	return images(pages), nil
+}
+
+func decodeURFPages(br *bufio.Reader) ([]Page, error) {
 	head := make([]byte, len(urfMagic)+4)
 	if _, err := io.ReadFull(br, head); err != nil {
 		return nil, fmt.Errorf("reading URF header: %w", err)
@@ -73,7 +80,7 @@ func DecodeURF(r io.Reader) ([]image.Image, error) {
 	if numPages <= 0 || numPages > 65535 {
 		return nil, fmt.Errorf("invalid URF page count %d", numPages)
 	}
-	pages := make([]image.Image, 0, numPages)
+	pages := make([]Page, 0, numPages)
 	hdr := make([]byte, urfPageHeaderSize)
 	for page := 1; page <= numPages; page++ {
 		if _, err := io.ReadFull(br, hdr); err != nil {
@@ -87,7 +94,7 @@ func DecodeURF(r io.Reader) ([]image.Image, error) {
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", page, err)
 		}
-		pages = append(pages, img)
+		pages = append(pages, Page{Image: img, XDPI: h.DPI, YDPI: h.DPI})
 	}
 	if len(pages) == 0 {
 		return nil, errors.New("no pages in URF stream")
