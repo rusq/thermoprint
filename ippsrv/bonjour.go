@@ -17,7 +17,14 @@ import (
 	"strings"
 
 	"github.com/brutella/dnssd"
+	ddnslog "github.com/brutella/dnssd/log"
 )
+
+func init() {
+	// Disable ddnssd log messages
+	ddnslog.Info.Disable()
+	ddnslog.Debug.Disable()
+}
 
 // WithBonjour enables Bonjour/DNS-SD advertisement of the printers when the
 // server starts listening.
