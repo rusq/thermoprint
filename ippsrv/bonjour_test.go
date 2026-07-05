@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,17 +24,20 @@ func TestTxtRecord(t *testing.T) {
 	p, err := WrapDriver(fakeDriver{}, "default", "Thermal Printer")
 	require.NoError(t, err)
 
-	got := txtRecord(p, "/printers/", "myhost", 6310)
+	got := txtRecord(p, "/printers/", "myhost", 6310, 203)
 
 	assert.Equal(t, "printers/default", got["rp"], "rp must be derived from baseURL and printer name")
 	assert.Equal(t, "1", got["txtvers"])
 	assert.Equal(t, "1", got["qtotal"])
 	assert.Equal(t, "Thermal Printer", got["ty"])
-	assert.Equal(t, "application/pdf", got["pdl"], "pdl must only advertise formats the server can render")
+	assert.Equal(t, "image/urf,image/pwg-raster", got["pdl"],
+		"pdl must advertise raster only: listing PDF makes clients pass PDFs through instead of rasterising")
+	assert.Equal(t, strings.Join(urfSupported(203), ","), got["URF"],
+		"URF key enables driverless setup on macOS and must match the urf-supported IPP attribute")
+	assert.Equal(t, "(Thermal Printer)", got["product"])
+	assert.Equal(t, "label", got["kind"])
 	assert.Equal(t, "http://myhost.local.:6310/admin/", got["adminurl"])
 	assert.Equal(t, p.UUID(), got["UUID"], "TXT UUID must be bare, without the urn:uuid: prefix")
-	assert.NotContains(t, got, "urf", "must not claim AirPrint/URF support")
-	assert.NotContains(t, got, "URF", "must not claim AirPrint/URF support")
 }
 
 func TestCheckAdvertisable(t *testing.T) {

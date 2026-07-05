@@ -26,6 +26,7 @@ type Job struct {
 	Username     string // Username of the user who created the job
 	JobURI       string // URL to access the job, e.g., "/printers/default/123"
 	PrinterURI   string // URI of the printer, e.g., "/printers/default"
+	Format       string // document-format of the job data, if provided by the client
 
 	sm     *fsm.FSM
 	buffer []byte // Buffer for job data, if needed
@@ -169,13 +170,21 @@ func createJobFromRequest(p Printer, baseURL string, id JobID, req *goipp.Messag
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract printer-uri: %w", err)
 	}
+	// document-format is optional; used for logging only, the data format is
+	// sniffed at print time.
+	format, err := extractValue[goipp.String](req.Operation, "document-format")
+	if err != nil {
+		format = ""
+	} else {
+		slog.Debug("job document format", "job_id", id, "document_format", format)
+	}
 
 	jobURL := path.Join(baseURL, p.Name(), fmt.Sprintf("%d", id))
 
-	return createJob(p, id, printerURI.String(), jobURL, jobName.String(), username.String())
+	return createJob(p, id, printerURI.String(), jobURL, jobName.String(), username.String(), format.String())
 }
 
-func createJob(p Printer, id JobID, printerURI, jobURL, name, username string) (*Job, error) {
+func createJob(p Printer, id JobID, printerURI, jobURL, name, username, format string) (*Job, error) {
 	// Create a new job based on the message
 	job := &Job{
 		ID:           id,
@@ -189,6 +198,7 @@ func createJob(p Printer, id JobID, printerURI, jobURL, name, username string) (
 		Username:     username,
 		JobURI:       jobURL,
 		PrinterURI:   printerURI,
+		Format:       format,
 	}
 	job.sm = makeJobFSM(job)
 

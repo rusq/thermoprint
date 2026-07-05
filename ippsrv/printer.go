@@ -120,7 +120,9 @@ func WrapDriver(drv Driver, id, fullname string, opt ...PrinterOption) (Printer,
 		ID:       id,
 		state:    PSIdle, // Set initial state to idle
 		Drv:      drv,
-		Filter:   &imageMagickFilter{}, // Default filter, can be overridden
+		// Default filter: PWG/URF raster streams are decoded natively,
+		// anything else falls back to ImageMagick. Can be overridden.
+		Filter: &rasterSniffFilter{fallback: &imageMagickFilter{}},
 	}
 	for _, o := range opt {
 		if err := o(p); err != nil {
@@ -165,12 +167,21 @@ func (p *basePrinter) UpTime() int {
 	return int(time.Since(startTime).Seconds()) // returns seconds since start
 }
 
+// Media names are PWG 5101.1 self-describing sizes at the PRINTABLE width:
+// the label stock is 58mm, but the head prints 384px @ 203dpi ≈ 48mm.
+// Advertising 48mm makes driverless clients rasterise at exactly 384px, so
+// pages arrive pixel-perfect without rescaling.
 func (p *basePrinter) MediaSupported() []string {
-	return []string{"roll_57mm"}
+	return []string{
+		"om_label-48x100mm_48x100mm",
+		"om_label-48x40mm_48x40mm",
+		"om_label-48x32mm_48x32mm",
+		"om_label-48x60mm_48x60mm",
+	}
 }
 
 func (p *basePrinter) MediaDefault() string {
-	return "roll_57mm"
+	return "om_label-48x100mm_48x100mm"
 }
 
 func (p *basePrinter) UUID() string {

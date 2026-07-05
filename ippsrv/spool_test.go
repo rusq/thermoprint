@@ -45,7 +45,7 @@ func mustCreateJob(t *testing.T, p Printer, id JobID, name string) *Job {
 
 	printerURI := "ipp://localhost/printers/" + p.Name()
 	jobURI := fmt.Sprintf("/printers/%s/%d", p.Name(), id)
-	job, err := createJob(p, id, printerURI, jobURI, name, "tester")
+	job, err := createJob(p, id, printerURI, jobURI, name, "tester", "")
 	if err != nil {
 		t.Fatalf("createJob: %v", err)
 	}

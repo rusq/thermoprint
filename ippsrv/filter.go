@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"os/exec"
 	"strconv"
+
+	"github.com/rusq/thermoprint/cupsraster"
 )
 
 // filter is a component that can convert the postscript data to a printable
@@ -23,6 +25,27 @@ type Filter interface {
 	// Type returns the type of the filter, e.g. "ImageMagick", "Ghostscript",
 	// etc.
 	Type() string
+}
+
+// rasterSniffFilter decodes pre-rasterised page streams (PWG raster, Apple
+// URF) natively and delegates everything else to the fallback filter.  It is
+// what allows CUPS/macOS clients to rasterise documents on their side.
+type rasterSniffFilter struct {
+	fallback Filter
+}
+
+var _ Filter = &rasterSniffFilter{}
+
+func (f *rasterSniffFilter) ToRaster(ctx context.Context, dpi int, data []byte) ([]image.Image, error) {
+	if format := cupsraster.Detect(data); format != cupsraster.FormatUnknown {
+		slog.InfoContext(ctx, "decoding client-rasterised document", "format", format)
+		return cupsraster.Decode(bytes.NewReader(data))
+	}
+	return f.fallback.ToRaster(ctx, dpi, data)
+}
+
+func (f *rasterSniffFilter) Type() string {
+	return "raster+" + f.fallback.Type()
 }
 
 type imageMagickFilter struct{}
