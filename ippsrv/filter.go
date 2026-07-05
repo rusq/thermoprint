@@ -11,6 +11,10 @@ import (
 	"log/slog"
 	"os/exec"
 	"strconv"
+
+	"golang.org/x/image/draw"
+
+	"github.com/rusq/thermoprint/cupsraster"
 )
 
 // filter is a component that can convert the postscript data to a printable
@@ -23,6 +27,56 @@ type Filter interface {
 	// Type returns the type of the filter, e.g. "ImageMagick", "Ghostscript",
 	// etc.
 	Type() string
+}
+
+// rasterSniffFilter decodes pre-rasterised page streams (PWG raster, Apple
+// URF) natively and delegates everything else to the fallback filter.  It is
+// what allows CUPS/macOS clients to rasterise documents on their side.
+type rasterSniffFilter struct {
+	fallback Filter
+}
+
+var _ Filter = &rasterSniffFilter{}
+
+func (f *rasterSniffFilter) ToRaster(ctx context.Context, dpi int, data []byte) ([]image.Image, error) {
+	if format := cupsraster.Detect(data); format != cupsraster.FormatUnknown {
+		slog.InfoContext(ctx, "decoding client-rasterised document", "format", format)
+		pages, err := cupsraster.DecodePages(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		imgs := make([]image.Image, len(pages))
+		for i, pg := range pages {
+			imgs[i] = scaleToDPI(ctx, pg, dpi)
+		}
+		return imgs, nil
+	}
+	return f.fallback.ToRaster(ctx, dpi, data)
+}
+
+// scaleToDPI resizes a decoded page whose declared resolution differs from
+// the printer's, preserving the physical print size: a 100dpi page printed
+// pixel-for-pixel on a 203dpi head would come out at half size.
+func scaleToDPI(ctx context.Context, pg cupsraster.Page, dpi int) image.Image {
+	if pg.XDPI <= 0 || pg.YDPI <= 0 || (pg.XDPI == dpi && pg.YDPI == dpi) {
+		return pg.Image
+	}
+	b := pg.Image.Bounds()
+	w := (b.Dx()*dpi + pg.XDPI/2) / pg.XDPI
+	h := (b.Dy()*dpi + pg.YDPI/2) / pg.YDPI
+	if w < 1 || h < 1 {
+		return pg.Image
+	}
+	slog.InfoContext(ctx, "scaling raster page to printer resolution",
+		"page_dpi_x", pg.XDPI, "page_dpi_y", pg.YDPI, "printer_dpi", dpi,
+		"from", fmt.Sprintf("%dx%d", b.Dx(), b.Dy()), "to", fmt.Sprintf("%dx%d", w, h))
+	dst := image.NewGray(image.Rect(0, 0, w, h))
+	draw.CatmullRom.Scale(dst, dst.Bounds(), pg.Image, b, draw.Src, nil)
+	return dst
+}
+
+func (f *rasterSniffFilter) Type() string {
+	return "raster+" + f.fallback.Type()
 }
 
 type imageMagickFilter struct{}

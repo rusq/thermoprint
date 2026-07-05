@@ -142,6 +142,7 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printer
 	if printerURI == "" {
 		printerURI = ih.baseURL + p.Name()
 	}
+	dpi := int(p.Driver().DPI())
 	m := baseResponse(goipp.StatusOk, requestID)
 	a := adder(&m.Operation)
 	a("printer-uri-supported", goipp.TagURI, goipp.String(printerURI))
@@ -166,8 +167,37 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printer
 	a("charset-supported", goipp.TagCharset, ippUTF8)
 	a("natural-language-configured", goipp.TagLanguage, ippENUS)
 	a("generated-natural-language-supported", goipp.TagLanguage, ippENUS)
-	a("document-format-default", goipp.TagMimeType, ippApplicationPDF)
-	a("document-format-supported", goipp.TagMimeType, ippApplicationPDF)
+	// Only raster formats are advertised: listing application/pdf would make
+	// CUPS driverless clients pass PDFs through instead of rasterising them
+	// client-side.  PDF is still accepted — the print filter sniffs the data
+	// format and falls back to ImageMagick for anything that is not raster.
+	a("document-format-default", goipp.TagMimeType, ippImagePWGRaster)
+	a("document-format-supported", goipp.TagMimeType, ippImagePWGRaster, ippImageURF)
+	// PWG 5102.4 raster attributes; type keywords are bits-per-COLOR
+	// (24-bit RGB would be srgb_8), mono/grayscale only for this printer.
+	a("pwg-raster-document-resolution-supported", goipp.TagResolution,
+		goipp.Resolution{Xres: dpi, Yres: dpi, Units: goipp.UnitsDpi})
+	a("pwg-raster-document-type-supported", goipp.TagKeyword,
+		goipp.String("black_1"), goipp.String("sgray_8"))
+	a("pwg-raster-document-sheet-back", goipp.TagKeyword, goipp.String("normal"))
+	// Apple Raster; grayscale only (no SRGB24) for the same reason.  Must
+	// match the URF TXT record key, hence the shared helper.
+	a("urf-supported", goipp.TagKeyword, stringsToValues(urfSupported(dpi))...)
+	a("printer-resolution-supported", goipp.TagResolution,
+		goipp.Resolution{Xres: dpi, Yres: dpi, Units: goipp.UnitsDpi})
+	a("printer-resolution-default", goipp.TagResolution,
+		goipp.Resolution{Xres: dpi, Yres: dpi, Units: goipp.UnitsDpi})
+	a("print-color-mode-supported", goipp.TagKeyword, goipp.String("monochrome"))
+	a("print-color-mode-default", goipp.TagKeyword, goipp.String("monochrome"))
+	a("sides-supported", goipp.TagKeyword, goipp.String("one-sided"))
+	a("sides-default", goipp.TagKeyword, goipp.String("one-sided"))
+	a("copies-supported", goipp.TagRange, goipp.Range{Lower: 1, Upper: 1})
+	a("copies-default", goipp.TagInteger, goipp.Integer(1))
+	// print-quality drives the resolution entries in Apple's ipp2ppd
+	// AirPrint PPD generator: without it no *DefaultResolution is emitted
+	// and cgpdftoraster rasterises at 100dpi, printing at half size.
+	a("print-quality-supported", goipp.TagEnum, goipp.Integer(4)) // normal
+	a("print-quality-default", goipp.TagEnum, goipp.Integer(4))
 	a("printer-is-accepting-jobs", goipp.TagBoolean, goipp.Boolean(p.Ready()))
 	a("queued-job-count", goipp.TagInteger, goipp.Integer(ih.spool.GetJobCount(p.Name()))) // TODO: interrogate spooler for queued jobs for this printer
 	a("pdl-override-supported", goipp.TagKeyword, goipp.String("not-attempted"))
@@ -175,6 +205,13 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printer
 	a("compression-supported", goipp.TagKeyword, ippNone)
 	a("media-supported", goipp.TagKeyword, stringsToValues(p.MediaSupported())...)
 	a("media-default", goipp.TagKeyword, goipp.String(p.MediaDefault()))
+	if sizes, cols := mediaCollections(p.MediaSupported()); len(sizes) > 0 {
+		a("media-size-supported", goipp.TagBeginCollection, sizes...)
+		a("media-col-database", goipp.TagBeginCollection, cols...)
+	}
+	if x, y, err := mediaSizeDimensions(p.MediaDefault()); err == nil {
+		a("media-col-default", goipp.TagBeginCollection, mediaCol(x, y))
+	}
 	a("printer-uuid", goipp.TagURI, goipp.String("urn:uuid:"+p.UUID()))
 
 	return m

@@ -66,7 +66,7 @@ func addTestJob(t *testing.T, s *basicIPPServer, id JobID, name, username string
 
 	p := s.Printer["test-printer"]
 	jobURL := fmt.Sprintf("/printers/test-printer/%d", id)
-	job, err := createJob(p, id, "ipp://localhost/printers/test-printer", jobURL, name, username)
+	job, err := createJob(p, id, "ipp://localhost/printers/test-printer", jobURL, name, username, "")
 	if err != nil {
 		t.Fatalf("createJob: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestJobAttributesTimeSyntax(t *testing.T) {
 func TestJobAttributesZeroTimeIsNoValue(t *testing.T) {
 	s := newTestIPPServer(t)
 	p := s.Printer["test-printer"]
-	job, err := createJob(p, 42, "ipp://localhost/printers/test-printer", "/printers/test-printer/42", "test-job", "tester")
+	job, err := createJob(p, 42, "ipp://localhost/printers/test-printer", "/printers/test-printer/42", "test-job", "tester", "")
 	if err != nil {
 		t.Fatalf("createJob: %v", err)
 	}

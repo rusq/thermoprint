@@ -59,7 +59,7 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 		base.SetExitStatus(base.SApplicationError)
 		return fmt.Errorf("failed to get printer: %w", err)
 	}
-	ippPrn, err := ippsrv.WrapDriver(p, "default", "Thermal Printer")
+	ippPrn, err := ippsrv.WrapDriver(p, "default", "LX-D02 Thermal Printer")
 	if err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return fmt.Errorf("failed to wrap printer: %w", err)
