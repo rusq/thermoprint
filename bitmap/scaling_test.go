@@ -21,6 +21,21 @@ func testColorImage(rect image.Rectangle, col color.Color) *image.RGBA {
 	return m
 }
 
+func TestResizeToFitCompositesTransparentPixelsOnWhiteWhenScaling(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 4, 2))
+
+	got := ResizeToFit(src, 2)
+
+	for y := got.Bounds().Min.Y; y < got.Bounds().Max.Y; y++ {
+		for x := got.Bounds().Min.X; x < got.Bounds().Max.X; x++ {
+			r, g, b, a := got.At(x, y).RGBA()
+			if r != 0xffff || g != 0xffff || b != 0xffff || a != 0xffff {
+				t.Fatalf("transparent pixel at (%d,%d) = rgba(%d,%d,%d,%d), want opaque white", x, y, r, g, b, a)
+			}
+		}
+	}
+}
+
 func TestResizeCanvasY(t *testing.T) {
 	type args struct {
 		dst       *image.RGBA

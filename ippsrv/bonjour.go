@@ -76,7 +76,7 @@ func txtRecord(p PrinterInformer, baseURL, hostname string, port, dpi int) map[s
 		"adminurl": fmt.Sprintf("http://%s.local.:%d/admin/", hostname, port),
 		"UUID":     p.UUID(),
 		"kind":     "label",
-		"PaperMax": "<legal-A4",
+		"PaperMax": ">isoC-A2",
 		"Color":    "F",
 		"Duplex":   "F",
 		"Scan":     "F",

@@ -25,7 +25,8 @@ func ResizeToFit(img image.Image, targetWidth int) image.Image {
 		// Resize the image to the target width while maintaining aspect ratio
 		targetHeight := (img.Bounds().Dy() * targetWidth) / img.Bounds().Dx()
 		resized = image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
-		draw.CatmullRom.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Src, nil)
+		draw.Draw(resized, resized.Bounds(), image.White, image.Point{}, draw.Src)
+		draw.CatmullRom.Scale(resized, resized.Bounds(), img, img.Bounds(), draw.Over, nil)
 	}
 	return resized
 }

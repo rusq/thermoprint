@@ -75,6 +75,24 @@ Add Printer, Scanner or Fax…**: "LX-D02 Thermal Printer" appears in the
 list as an AirPrint printer.  Add it — no driver or PPD is asked for —
 select the label size in the print dialog and print.
 
+### Variable roll height on macOS
+
+For continuous roll paper, create a custom paper size in the macOS print
+dialog:
+
+1. Open the app's print dialog and expand **Paper Size**.
+2. Choose **Manage Custom Sizes…**.
+3. Press **+** and create a size with width `48 mm` and a height between
+   `20 mm` and `1000 mm`.
+4. Set all non-printable margins to `0`.
+5. Select that custom size before printing.
+
+The printer advertises the 48 mm printable width, not the full 58 mm stock
+width, so custom sizes should also use `48 mm` width.  Custom roll-height
+jobs are trimmed at the bottom after rasterising, so selecting a taller page
+acts as an upper bound; fixed label sizes still feed their full selected
+height for die-cut stock alignment.
+
 If you re-configure the server (or upgrade to a newer version), remove and
 re-add the printer: macOS generates the printer description once, at add
 time.

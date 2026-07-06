@@ -48,12 +48,18 @@ func TestPrinterAttributes_RasterAdvertisement(t *testing.T) {
 
 	media := attrStrings(t, resp.Operation, "media-supported")
 	assert.Contains(t, media, "om_label-48x100mm_48x100mm")
+	assert.Contains(t, media, rollCustomMinMedia)
+	assert.Contains(t, media, rollCustomMaxMedia)
+	assert.Equal(t, []string{"om_label-48x100mm_48x100mm"}, attrStrings(t, resp.Operation, "media-default"))
 
 	cols, ok := findAttr(resp.Operation, "media-col-database")
 	require.True(t, ok, "media-col-database missing")
-	assert.Len(t, cols, 4, "one media-col per label size")
+	assert.Len(t, cols, 5, "one media-col per fixed label size plus custom roll range")
 	_, ok = findAttr(resp.Operation, "media-size-supported")
 	assert.True(t, ok, "media-size-supported missing")
+	assert.ElementsMatch(t,
+		[]string{"media-size", "media-top-margin", "media-bottom-margin", "media-left-margin", "media-right-margin"},
+		attrStrings(t, resp.Operation, "media-col-supported"))
 	_, ok = findAttr(resp.Operation, "media-col-default")
 	assert.True(t, ok, "media-col-default missing")
 }

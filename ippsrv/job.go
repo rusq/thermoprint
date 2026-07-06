@@ -28,8 +28,9 @@ type Job struct {
 	PrinterURI   string // URI of the printer, e.g., "/printers/default"
 	Format       string // document-format of the job data, if provided by the client
 
-	sm     *fsm.FSM
-	buffer []byte // Buffer for job data, if needed
+	sm           *fsm.FSM
+	buffer       []byte // Buffer for job data, if needed
+	printOptions printJobOptions
 }
 
 type JobID int32
@@ -181,7 +182,12 @@ func createJobFromRequest(p Printer, baseURL string, id JobID, req *goipp.Messag
 
 	jobURL := path.Join(baseURL, p.Name(), fmt.Sprintf("%d", id))
 
-	return createJob(p, id, printerURI.String(), jobURL, jobName.String(), username.String(), format.String())
+	job, err := createJob(p, id, printerURI.String(), jobURL, jobName.String(), username.String(), format.String())
+	if err != nil {
+		return nil, err
+	}
+	job.printOptions.trimTrailingBlank = requestAllowsTrailingBlankTrim(req, p)
+	return job, nil
 }
 
 func createJob(p Printer, id JobID, printerURI, jobURL, name, username, format string) (*Job, error) {
@@ -260,7 +266,7 @@ func makeJobFSM(j *Job) *fsm.FSM {
 				j.Processing = time.Now() // Set the processing time to now
 				j.mu.Unlock()
 				// Call the printer's Print method with the job data
-				if err := j.Printer.Print(ctx, data); err != nil {
+				if err := printWithOptions(ctx, j.Printer, data, j.printOptions); err != nil {
 					lg.ErrorContext(ctx, "Failed to print job data", "error", err)
 					// If printing fails, we can abort the job
 					if err := e.FSM.Event(ctx, jobEvtAbort, JSRDocumentFormatError, JSRAbortedBySystem); err != nil {
