@@ -36,6 +36,7 @@ func TestTxtRecord(t *testing.T) {
 		"URF key enables driverless setup on macOS and must match the urf-supported IPP attribute")
 	assert.Equal(t, "(Thermal Printer)", got["product"])
 	assert.Equal(t, "label", got["kind"])
+	assert.Equal(t, ">isoC-A2", got["PaperMax"])
 	assert.Equal(t, "http://myhost.local.:6310/admin/", got["adminurl"])
 	assert.Equal(t, p.UUID(), got["UUID"], "TXT UUID must be bare, without the urn:uuid: prefix")
 }

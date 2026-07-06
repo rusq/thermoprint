@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	"log/slog"
 	"sync"
 	"time"
@@ -177,6 +179,8 @@ func (p *basePrinter) MediaSupported() []string {
 		"om_label-48x40mm_48x40mm",
 		"om_label-48x32mm_48x32mm",
 		"om_label-48x60mm_48x60mm",
+		rollCustomMinMedia,
+		rollCustomMaxMedia,
 	}
 }
 
@@ -200,9 +204,37 @@ var (
 	// ErrNoImages is returned when the data could not be converted to any
 	// images.
 	ErrNoImages = errors.New("no images were converted from the data")
+	// ErrPrintOptionsUnsupported is returned when a printer cannot honor
+	// options attached to an IPP print job.
+	ErrPrintOptionsUnsupported = errors.New("printer does not support print job options")
 )
 
+// PrintOptions are optional behaviors requested for a single IPP print job.
+type PrintOptions struct {
+	// TrimTrailingBlank removes trailing blank rows for variable-height roll
+	// jobs so the printer stops after the visible content.
+	TrimTrailingBlank bool
+}
+
+// OptionPrinter is implemented by printers that can honor per-job print
+// options supplied by the IPP server.
+type OptionPrinter interface {
+	PrintWithOptions(ctx context.Context, data []byte, opts PrintOptions) error
+}
+
+type printJobOptions struct {
+	trimTrailingBlank bool
+}
+
 func (p *basePrinter) Print(ctx context.Context, data []byte) error {
+	return p.print(ctx, data, printJobOptions{})
+}
+
+func (p *basePrinter) PrintWithOptions(ctx context.Context, data []byte, opts PrintOptions) error {
+	return p.print(ctx, data, printJobOptions{trimTrailingBlank: opts.TrimTrailingBlank})
+}
+
+func (p *basePrinter) print(ctx context.Context, data []byte, opts printJobOptions) error {
 	p.printMu.Lock()
 	defer p.printMu.Unlock()
 
@@ -216,7 +248,7 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 	// try decoding the data as an image
 	if img, _, err := image.Decode(bytes.NewReader(data)); err == nil {
 		// fast path for images
-		return p.Drv.PrintImage(ctx, img)
+		return p.printImage(ctx, img, opts)
 	}
 
 	// slow path for other data formats
@@ -241,10 +273,77 @@ func (p *basePrinter) Print(ctx context.Context, data []byte) error {
 		}
 	}
 	// print the image.
-	if err := p.Drv.PrintImage(ctx, c.Image()); err != nil {
+	img := c.Image()
+	return p.printImage(ctx, img, opts)
+}
+
+func (p *basePrinter) printImage(ctx context.Context, img image.Image, opts printJobOptions) error {
+	if opts.trimTrailingBlank {
+		img = trimTrailingBlankRows(img)
+	}
+	if err := p.Drv.PrintImage(ctx, img); err != nil {
 		return fmt.Errorf("failed to print image: %w", err)
 	}
 	return nil
+}
+
+func printWithOptions(ctx context.Context, p Printer, data []byte, opts printJobOptions) error {
+	if p, ok := p.(OptionPrinter); ok {
+		return p.PrintWithOptions(ctx, data, PrintOptions{TrimTrailingBlank: opts.trimTrailingBlank})
+	}
+	if opts.trimTrailingBlank {
+		return ErrPrintOptionsUnsupported
+	}
+	return p.Print(ctx, data)
+}
+
+func trimTrailingBlankRows(img image.Image) image.Image {
+	b := img.Bounds()
+	if b.Empty() || b.Dy() <= 1 {
+		return img
+	}
+	last := b.Min.Y
+	for y := b.Max.Y - 1; y >= b.Min.Y; y-- {
+		if !isBlankRow(img, y) {
+			last = y
+			break
+		}
+	}
+	height := last - b.Min.Y + 1
+	if height == b.Dy() {
+		return img
+	}
+	trimmed := image.Rect(b.Min.X, b.Min.Y, b.Max.X, b.Min.Y+height)
+	if img, ok := img.(interface {
+		SubImage(image.Rectangle) image.Image
+	}); ok {
+		return img.SubImage(trimmed)
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), height))
+	draw.Draw(dst, dst.Bounds(), img, b.Min, draw.Src)
+	return dst
+}
+
+func isBlankRow(img image.Image, y int) bool {
+	b := img.Bounds()
+	for x := b.Min.X; x < b.Max.X; x++ {
+		if colorToWhiteBackgroundGray(img.At(x, y)) != 255 {
+			return false
+		}
+	}
+	return true
+}
+
+func colorToWhiteBackgroundGray(c color.Color) uint8 {
+	if gray, ok := c.(color.Gray); ok {
+		return gray.Y
+	}
+	r, g, b, a := c.RGBA()
+	r += 0xffff - a
+	g += 0xffff - a
+	b += 0xffff - a
+	gray := (299*r + 587*g + 114*b) / 1000
+	return uint8(gray >> 8)
 }
 
 func (p *basePrinter) SetState(state PrinterState) {

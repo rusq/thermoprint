@@ -209,6 +209,13 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printer
 		a("media-size-supported", goipp.TagBeginCollection, sizes...)
 		a("media-col-database", goipp.TagBeginCollection, cols...)
 	}
+	a("media-col-supported", goipp.TagKeyword,
+		goipp.String("media-size"),
+		goipp.String("media-top-margin"),
+		goipp.String("media-bottom-margin"),
+		goipp.String("media-left-margin"),
+		goipp.String("media-right-margin"),
+	)
 	if x, y, err := mediaSizeDimensions(p.MediaDefault()); err == nil {
 		a("media-col-default", goipp.TagBeginCollection, mediaCol(x, y))
 	}
