@@ -25,6 +25,9 @@ import (
 const (
 	// DefaultPrintDelay is the default interval between sending packets to the printer
 	DefaultPrintDelay = 7 * time.Millisecond
+
+	minPrintDelay = 0
+	maxPrintDelay = 10 * time.Second
 )
 
 const (
@@ -104,7 +107,7 @@ func WithEnergy(v uint8) Option {
 }
 
 func WithPrintInterval(d time.Duration) Option {
-	if d <= 0 || 10*time.Second < d {
+	if d <= minPrintDelay || maxPrintDelay < d {
 		d = DefaultPrintDelay // Default to 7ms if invalid
 	}
 	return func(o *printOptions) {
@@ -271,7 +274,7 @@ func (s lxd02status) String() string {
 }
 
 func parseStatus(data []byte) (lxd02status, error) {
-	if !bytes.HasPrefix(data, []byte{0x5a, 0x02}) || len(data) < 6 {
+	if !bytes.HasPrefix(data, prefixStatus) || len(data) < 6 {
 		return lxd02status{}, fmt.Errorf("invalid status data prefix or length: %x", data[:2])
 	}
 	payload := data[2:]
