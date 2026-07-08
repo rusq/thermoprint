@@ -63,7 +63,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 		if evt == eventStart {
 			log.Info("Starting printer initialization")
 			p.state = stateInitializing
-			go p.sendInitSequence()
+			go p.startInitSequence()
 		}
 
 	case stateInitializing:
@@ -86,14 +86,14 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 
 				slog.Debug("Sending initial print command")
 				beginCmd := []byte{0x5a, 0x04, m, n, 0x00, 0x00}
-				resp, err := p.sendAndWait(beginCmd, beginCmd[:2], 3*time.Second)
+				resp, err := p.sendAndWaitForFSM(beginCmd, beginCmd[:2], 3*time.Second)
 				if err != nil {
 					slog.Error("Failed to send initial print command", "error", err)
 					p.eventCh <- fsmEvent{kind: eventError}
 					return
 				}
 				slog.Debug("Initial print command ack", "response", fmt.Sprintf("% x", resp))
-				p.printBuffer(0)
+				p.startPrintBuffer(0)
 			}()
 		}
 
@@ -114,7 +114,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 				p.printCancel()
 			}
 			p.state = statePrinting
-			go p.printBuffer(packet)
+			go p.startPrintBuffer(packet)
 		case eventError:
 			log.Error("Error occurred during print")
 			if p.printCancel != nil {
@@ -139,7 +139,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 			m := byte((buflen >> 8) & 0xFF)
 			n := byte(buflen & 0xFF)
 			finalCmd := []byte{0x5a, 0x04, m, n, 0x01, 0x00}
-			resp, err := p.sendAndWait(finalCmd, finalCmd[:2], 3*time.Second)
+			resp, err := p.sendAndWaitForFSM(finalCmd, finalCmd[:2], 3*time.Second)
 			if err != nil {
 				slog.Error("Failed to send final end command", "error", err)
 				p.eventCh <- fsmEvent{kind: eventError}
@@ -153,7 +153,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 			packet := extractRetryPacketIndex(data)
 			log.Warn("Retransmit request in waiting retry state", "packet", packet)
 			p.state = statePrinting
-			go p.printBuffer(packet)
+			go p.startPrintBuffer(packet)
 		default:
 			log.Warn("Unexpected event in waiting retry state", "event", evt)
 		}
@@ -163,7 +163,7 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 			packet := extractRetryPacketIndex(data)
 			log.Info("Resuming print after hold", "packet", packet)
 			p.state = statePrinting
-			go p.printBuffer(packet)
+			go p.startPrintBuffer(packet)
 		}
 
 	case stateFailed:
@@ -182,4 +182,27 @@ func (p *LXD02) transition(evt printerEvent, data []byte) {
 		p.state = stateFailed
 		p.doneCh <- struct{}{}
 	}
+}
+
+func (p *LXD02) startInitSequence() {
+	if p.initSequenceHook != nil {
+		p.initSequenceHook()
+		return
+	}
+	p.sendInitSequence()
+}
+
+func (p *LXD02) sendAndWaitForFSM(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error) {
+	if p.sendAndWaitHook != nil {
+		return p.sendAndWaitHook(data, expectPrefix, timeout)
+	}
+	return p.sendAndWait(data, expectPrefix, timeout)
+}
+
+func (p *LXD02) startPrintBuffer(start int) {
+	if p.printBufferHook != nil {
+		p.printBufferHook(start)
+		return
+	}
+	p.printBuffer(start)
 }

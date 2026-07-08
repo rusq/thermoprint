@@ -69,6 +69,11 @@ type LXD02 struct {
 	responseCh    chan []byte
 
 	options printOptions
+
+	initSequenceHook func()
+	sendAndWaitHook  func(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error)
+	printBufferHook  func(start int)
+	sendPacketHook   func(data []byte) error
 }
 
 var LXD02Rasteriser = &GenericRasteriser{
@@ -483,7 +488,7 @@ func (p *LXD02) printBuffer(start int) {
 				slog.Debug("Print buffer cancelled at packet", "packet", i)
 				return
 			case <-t.C:
-				err := p.send(p.buffer[i])
+				err := p.sendPacket(p.buffer[i])
 				if err != nil {
 					slog.Error("Failed to send packet", "packet", i, "error", err)
 					p.eventCh <- fsmEvent{kind: eventError}
@@ -495,6 +500,13 @@ func (p *LXD02) printBuffer(start int) {
 		slog.Info("All packets sent, waiting for printer to complete (5a06)")
 		p.eventCh <- fsmEvent{kind: eventNotificationFinished}
 	}()
+}
+
+func (p *LXD02) sendPacket(data []byte) error {
+	if p.sendPacketHook != nil {
+		return p.sendPacketHook(data)
+	}
+	return p.send(data)
 }
 
 const (
