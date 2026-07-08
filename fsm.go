@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/looplab/fsm"
@@ -46,7 +47,29 @@ type fsmEvent struct {
 	err  error
 }
 
-func (p *LXD02) newPrintFSM(initial printerState) *fsm.FSM {
+type printJob struct {
+	fsm         *fsm.FSM
+	eventCh     chan fsmEvent
+	doneCh      chan error
+	doneOnce    sync.Once
+	ctx         context.Context
+	cancel      context.CancelFunc
+	printCancel context.CancelFunc
+}
+
+func (p *LXD02) newPrintJob(ctx context.Context) *printJob {
+	jobCtx, cancel := context.WithCancel(ctx)
+	job := &printJob{
+		eventCh: make(chan fsmEvent, 10),
+		doneCh:  make(chan error, 1),
+		ctx:     jobCtx,
+		cancel:  cancel,
+	}
+	job.fsm = p.newPrintFSM(job, stateIdle)
+	return job
+}
+
+func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 	states := []string{
 		stateIdle.String(),
 		stateInitializing.String(),
@@ -72,80 +95,77 @@ func (p *LXD02) newPrintFSM(initial printerState) *fsm.FSM {
 		},
 		fsm.Callbacks{
 			"enter_state": func(_ context.Context, e *fsm.Event) {
-				p.setState(fsmStateToPrinterState(e.Dst))
+				p.setStateForJob(job, fsmStateToPrinterState(e.Dst))
 			},
 			"after_" + eventStart.String(): func(_ context.Context, _ *fsm.Event) {
 				slog.Info("Starting printer initialization")
-				go p.startInitSequence()
+				go p.startInitSequence(job)
 			},
 			"after_" + eventInitComplete.String(): func(_ context.Context, _ *fsm.Event) {
-				go p.beginPrint()
+				go p.beginPrint(job)
 			},
 			"after_" + eventPacketsSent.String(): func(_ context.Context, _ *fsm.Event) {
 				slog.Info("All packets sent, waiting for printer to complete (5a06)")
 			},
 			"after_" + eventNotificationHold.String(): func(_ context.Context, _ *fsm.Event) {
 				slog.Warn("Hold signal received, pausing print job")
-				p.cancelPrintBuffer()
+				p.cancelPrintBuffer(job)
 			},
 			"after_" + eventNotificationRetransmit.String(): func(_ context.Context, e *fsm.Event) {
 				packet := extractRetryPacketIndex(eventData(e))
 				slog.Warn("Retransmit request", "packet", packet)
-				p.cancelPrintBuffer()
-				go p.startPrintBuffer(packet)
+				p.cancelPrintBuffer(job)
+				go p.startPrintBuffer(job, packet)
 			},
 			"after_" + eventNotificationFinished.String(): func(_ context.Context, _ *fsm.Event) {
-				p.finishPrint()
+				p.finishPrint(job)
 			},
 			"after_" + eventCancel.String(): func(_ context.Context, e *fsm.Event) {
-				p.failPrint(eventErr(e, context.Canceled))
+				p.failPrint(job, eventErr(e, context.Canceled))
 			},
 			"after_" + eventError.String(): func(_ context.Context, e *fsm.Event) {
-				p.failPrint(eventErr(e, errPrintFailed))
+				p.failPrint(job, eventErr(e, errPrintFailed))
 			},
 		},
 	)
 }
 
-func (p *LXD02) runFSM(ctx context.Context) {
-	eventCh := p.currentEventCh()
-	if eventCh == nil {
-		slog.Warn("FSM requested without an event channel")
-		return
-	}
-
+func (p *LXD02) runFSM(job *printJob) {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-job.ctx.Done():
 			slog.Debug("FSM context done, exiting")
 			return
-		case evt, ok := <-eventCh:
+		case evt, ok := <-job.eventCh:
 			if !ok {
 				slog.Debug("FSM event channel closed, exiting")
 				return
 			}
-			p.transitionEvent(evt)
+			p.dispatchJobEvent(job, evt)
 		}
 	}
 }
 
 func (p *LXD02) transition(evt printerEvent, data []byte) {
-	p.transitionEvent(fsmEvent{kind: evt, data: data})
-}
-
-func (p *LXD02) transitionEvent(evt fsmEvent) {
-	machine := p.currentFSM()
-	if machine == nil {
-		slog.Warn("Ignoring FSM event with no active print", "event", evt.kind)
-		if evt.kind == eventCancel || evt.kind == eventError {
+	job := p.currentJob()
+	if job == nil {
+		slog.Warn("Ignoring FSM event with no active print", "event", evt)
+		if evt == eventCancel || evt == eventError {
 			p.setState(stateFailed)
-			p.failPrint(eventErrFromFSMEvent(evt, errPrintFailed))
 		}
 		return
 	}
+	p.dispatchJobEvent(job, fsmEvent{kind: evt, data: data})
+}
 
-	log := slog.With("state", machine.Current(), "event", evt.kind)
-	if err := machine.Event(context.Background(), evt.kind.String(), evt.data, evt.err); err != nil {
+func (p *LXD02) dispatchJobEvent(job *printJob, evt fsmEvent) bool {
+	if !p.isActiveJob(job) {
+		slog.Warn("Ignoring stale FSM event", "event", evt.kind)
+		return false
+	}
+
+	log := slog.With("state", job.fsm.Current(), "event", evt.kind)
+	if err := job.fsm.Event(context.Background(), evt.kind.String(), evt.data, evt.err); err != nil {
 		var invalid fsm.InvalidEventError
 		var unknown fsm.UnknownEventError
 		switch {
@@ -157,14 +177,18 @@ func (p *LXD02) transitionEvent(evt fsmEvent) {
 			log.Warn("FSM event returned error", "error", err)
 		}
 	}
-	p.setState(fsmStateToPrinterState(machine.Current()))
+	p.setStateForJob(job, fsmStateToPrinterState(job.fsm.Current()))
+	return true
 }
 
-func (p *LXD02) beginPrint() {
+func (p *LXD02) beginPrint(job *printJob) {
+	if !p.isActiveJob(job) {
+		return
+	}
 	buflen := len(p.buffer)
 	if buflen == 0 {
 		slog.Error("Buffer is empty, cannot start printing")
-		p.emitEvent(fsmEvent{kind: eventError, err: errBufferEmpty})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: errBufferEmpty})
 		return
 	}
 
@@ -174,14 +198,20 @@ func (p *LXD02) beginPrint() {
 	resp, err := p.sendAndWaitForFSM(beginCmd, beginCmd[:2], 3*time.Second)
 	if err != nil {
 		slog.Error("Failed to send initial print command", "error", err)
-		p.emitEvent(fsmEvent{kind: eventError, err: fmt.Errorf("send initial print command: %w", err)})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("send initial print command: %w", err)})
+		return
+	}
+	if !p.isActiveJob(job) {
 		return
 	}
 	slog.Debug("Initial print command ack", "response", fmt.Sprintf("% x", resp))
-	p.startPrintBuffer(0)
+	p.startPrintBuffer(job, 0)
 }
 
-func (p *LXD02) finishPrint() {
+func (p *LXD02) finishPrint(job *printJob) {
+	if !p.isActiveJob(job) {
+		return
+	}
 	buflen := len(p.buffer)
 	m := byte((buflen >> 8) & 0xFF)
 	n := byte(buflen & 0xFF)
@@ -189,57 +219,52 @@ func (p *LXD02) finishPrint() {
 	resp, err := p.sendAndWaitForFSM(finalCmd, finalCmd[:2], 3*time.Second)
 	if err != nil {
 		slog.Error("Failed to send final end command", "error", err)
-		p.emitEvent(fsmEvent{kind: eventError, err: fmt.Errorf("send final end command: %w", err)})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("send final end command: %w", err)})
+		return
+	}
+	if !p.isActiveJob(job) {
 		return
 	}
 	slog.Debug("Final end-of-transmission command ack", "response", fmt.Sprintf("% x", resp))
-	p.completePrint(nil)
+	p.completePrint(job, nil)
 }
 
-func (p *LXD02) failPrint(err error) {
-	p.cancelPrintBuffer()
-	p.completePrint(err)
+func (p *LXD02) failPrint(job *printJob, err error) {
+	p.cancelPrintBuffer(job)
+	p.completePrint(job, err)
 }
 
-func (p *LXD02) completePrint(err error) {
-	p.doneOnce.Do(func() {
-		doneCh := p.currentDoneCh()
-		if doneCh == nil {
-			return
-		}
+func (p *LXD02) completePrint(job *printJob, err error) {
+	job.doneOnce.Do(func() {
+		job.cancel()
+		p.cancelPrintBuffer(job)
 		select {
-		case doneCh <- err:
+		case job.doneCh <- err:
 		default:
 		}
 	})
 }
 
-func (p *LXD02) cancelPrintBuffer() {
+func (p *LXD02) cancelPrintBuffer(job *printJob) {
 	p.stateMu.Lock()
-	cancel := p.printCancel
-	p.printCancel = nil
+	cancel := job.printCancel
+	job.printCancel = nil
 	p.stateMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
 }
 
-func (p *LXD02) currentFSM() *fsm.FSM {
+func (p *LXD02) currentJob() *printJob {
 	p.stateMu.Lock()
 	defer p.stateMu.Unlock()
-	return p.printFSM
+	return p.activeJob
 }
 
-func (p *LXD02) currentEventCh() chan fsmEvent {
+func (p *LXD02) isActiveJob(job *printJob) bool {
 	p.stateMu.Lock()
 	defer p.stateMu.Unlock()
-	return p.eventCh
-}
-
-func (p *LXD02) currentDoneCh() chan error {
-	p.stateMu.Lock()
-	defer p.stateMu.Unlock()
-	return p.doneCh
+	return job != nil && p.activeJob == job
 }
 
 func (p *LXD02) setState(state printerState) {
@@ -248,29 +273,22 @@ func (p *LXD02) setState(state printerState) {
 	p.stateMu.Unlock()
 }
 
-func (p *LXD02) emitEvent(evt fsmEvent) bool {
-	eventCh := p.currentEventCh()
-	if eventCh == nil {
-		slog.Warn("Ignoring FSM event with no active print", "event", evt.kind)
-		return false
+func (p *LXD02) setStateForJob(job *printJob, state printerState) {
+	p.stateMu.Lock()
+	if p.activeJob == job {
+		p.state = state
 	}
-	select {
-	case eventCh <- evt:
-		return true
-	default:
-		slog.Warn("Dropping FSM event because event channel is full", "event", evt.kind)
-		return false
-	}
+	p.stateMu.Unlock()
 }
 
 func (p *LXD02) routeNotificationEvent(evt fsmEvent) bool {
-	eventCh := p.currentEventCh()
-	if eventCh == nil {
+	job := p.currentJob()
+	if job == nil {
 		slog.Warn("Ignoring printer notification with no active print", "event", evt.kind)
 		return false
 	}
 	select {
-	case eventCh <- evt:
+	case job.eventCh <- evt:
 		return true
 	default:
 		slog.Warn("Dropping printer notification because event channel is not ready", "event", evt.kind)
@@ -278,12 +296,12 @@ func (p *LXD02) routeNotificationEvent(evt fsmEvent) bool {
 	}
 }
 
-func (p *LXD02) startInitSequence() {
+func (p *LXD02) startInitSequence(job *printJob) {
 	if p.initSequenceHook != nil {
-		p.initSequenceHook()
+		p.initSequenceHook(job)
 		return
 	}
-	p.sendInitSequence()
+	p.sendInitSequence(job)
 }
 
 func (p *LXD02) sendAndWaitForFSM(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error) {
@@ -293,12 +311,12 @@ func (p *LXD02) sendAndWaitForFSM(data []byte, expectPrefix []byte, timeout time
 	return p.sendAndWait(data, expectPrefix, timeout)
 }
 
-func (p *LXD02) startPrintBuffer(start int) {
+func (p *LXD02) startPrintBuffer(job *printJob, start int) {
 	if p.printBufferHook != nil {
-		p.printBufferHook(start)
+		p.printBufferHook(job, start)
 		return
 	}
-	p.printBuffer(start)
+	p.printBuffer(job, start)
 }
 
 func fsmStateToPrinterState(state string) printerState {
@@ -337,13 +355,6 @@ func eventErr(e *fsm.Event, fallback error) error {
 		if err, ok := e.Args[1].(error); ok && err != nil {
 			return err
 		}
-	}
-	return fallback
-}
-
-func eventErrFromFSMEvent(evt fsmEvent, fallback error) error {
-	if evt.err != nil {
-		return evt.err
 	}
 	return fallback
 }

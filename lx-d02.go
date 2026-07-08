@@ -19,7 +19,6 @@ import (
 	"golang.org/x/image/font"
 	"tinygo.org/x/bluetooth"
 
-	"github.com/looplab/fsm"
 	"github.com/rusq/thermoprint/bitmap"
 )
 
@@ -59,13 +58,9 @@ type LXD02 struct {
 	buffer     [][]byte
 	rasteriser Rasteriser // Interface for rasterizing images
 
-	stateMu     sync.Mutex
-	state       printerState
-	eventCh     chan fsmEvent
-	doneCh      chan error
-	doneOnce    sync.Once
-	printCancel context.CancelFunc
-	printFSM    *fsm.FSM
+	stateMu   sync.Mutex
+	state     printerState
+	activeJob *printJob
 
 	responseMu    sync.Mutex
 	waitingPrefix []byte
@@ -73,9 +68,9 @@ type LXD02 struct {
 
 	options printOptions
 
-	initSequenceHook func()
+	initSequenceHook func(job *printJob)
 	sendAndWaitHook  func(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error)
-	printBufferHook  func(start int)
+	printBufferHook  func(job *printJob, start int)
 	sendPacketHook   func(data []byte) error
 }
 
@@ -421,49 +416,37 @@ func (p *LXD02) PrintRAW(ctx context.Context, data [][]byte) error {
 func (p *LXD02) printPackets(ctx context.Context, packets [][]byte) error {
 	p.loadBuffer(packets)
 
-	doneCh := make(chan error, 1)
-	eventCh := make(chan fsmEvent, 10)
+	job := p.newPrintJob(context.Background())
 	p.stateMu.Lock()
-	p.doneCh = doneCh
-	p.doneOnce = sync.Once{}
-	p.eventCh = eventCh
-	p.printCancel = nil
+	p.activeJob = job
 	p.state = stateIdle
-	p.printFSM = p.newPrintFSM(stateIdle)
 	p.stateMu.Unlock()
 
-	// pctx is the context for the FSM, it will be cancelled when the
-	// print job is done or if the context is cancelled.  It will stop
-	// the FSM goroutine.
-	pctx, cancel := context.WithCancel(context.Background())
 	defer func() {
-		cancel()
-		p.cancelPrintBuffer()
+		job.cancel()
+		p.cancelPrintBuffer(job)
 		p.stateMu.Lock()
-		if p.eventCh == eventCh {
-			p.eventCh = nil
-			p.doneCh = nil
-			p.printFSM = nil
-			p.printCancel = nil
+		if p.activeJob == job {
+			p.activeJob = nil
 		}
 		p.stateMu.Unlock()
 	}()
 
-	go p.runFSM(pctx)
+	go p.runFSM(job)
 
-	p.emitEvent(fsmEvent{kind: eventStart})
+	p.dispatchJobEvent(job, fsmEvent{kind: eventStart})
 
 	select {
-	case err := <-doneCh:
+	case err := <-job.doneCh:
 		if err != nil {
 			return err
 		}
 		slog.Info("print completed successfully")
 		return nil
 	case <-ctx.Done():
-		p.transitionEvent(fsmEvent{kind: eventCancel, err: ctx.Err()})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventCancel, err: ctx.Err()})
 		select {
-		case err := <-doneCh:
+		case err := <-job.doneCh:
 			if err != nil {
 				return err
 			}
@@ -504,15 +487,15 @@ var errBufferEmpty = errors.New("buffer is empty")
 
 // printBuffer sends the buffer to printer starting from
 // packet n.
-func (p *LXD02) printBuffer(start int) {
+func (p *LXD02) printBuffer(job *printJob, start int) {
 	if len(p.buffer) == 0 || start >= len(p.buffer) {
-		p.emitEvent(fsmEvent{kind: eventError, err: errBufferEmpty})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: errBufferEmpty})
 		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p.stateMu.Lock()
-	p.printCancel = cancel
+	job.printCancel = cancel
 	p.stateMu.Unlock()
 
 	go func() {
@@ -530,13 +513,13 @@ func (p *LXD02) printBuffer(start int) {
 				err := p.sendPacket(p.buffer[i])
 				if err != nil {
 					slog.Error("Failed to send packet", "packet", i, "error", err)
-					p.emitEvent(fsmEvent{kind: eventError, err: fmt.Errorf("send packet %d: %w", i, err)})
+					p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("send packet %d: %w", i, err)})
 					return
 				}
 			}
 		}
 
-		p.emitEvent(fsmEvent{kind: eventPacketsSent})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent})
 	}()
 }
 
@@ -551,7 +534,7 @@ const (
 	minEnergy, maxEnergy = 1, 6
 )
 
-func (p *LXD02) sendInitSequence() {
+func (p *LXD02) sendInitSequence(job *printJob) {
 	initSeq := [][]byte{
 		{0x5a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 		{0x5a, 0x0a, 0xB5, 0x7C, 0x4C, 0xB8, 0xAE, 0x70, 0x51, 0xE6, 0xD3, 0x06},
@@ -562,12 +545,12 @@ func (p *LXD02) sendInitSequence() {
 		expectPrefix := cmd[:2]
 		resp, err := p.sendAndWait(cmd, expectPrefix, responseTimeout)
 		if err != nil {
-			p.emitEvent(fsmEvent{kind: eventError, err: fmt.Errorf("send init command % x: %w", expectPrefix, err)})
+			p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("send init command % x: %w", expectPrefix, err)})
 			return
 		}
 		slog.Debug("init ack", "prefix", fmt.Sprintf("% x", expectPrefix), "response", fmt.Sprintf("% x", resp))
 	}
-	p.emitEvent(fsmEvent{kind: eventInitComplete})
+	p.dispatchJobEvent(job, fsmEvent{kind: eventInitComplete})
 }
 
 func extractRetryPacketIndex(data []byte) int {

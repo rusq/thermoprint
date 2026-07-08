@@ -26,26 +26,32 @@ func newFSMTestPrinter(packetCount int) *LXD02 {
 		buffer[i] = []byte{byte(i)}
 	}
 	p := &LXD02{
-		buffer:  buffer,
-		state:   stateIdle,
-		eventCh: make(chan fsmEvent, 20),
-		doneCh:  make(chan error, 2),
+		buffer: buffer,
+		state:  stateIdle,
 		options: printOptions{
 			printInterval: time.Millisecond,
 		},
 	}
-	p.printFSM = p.newPrintFSM(stateIdle)
+	job := p.newPrintJob(context.Background())
+	p.activeJob = job
 	return p
+}
+
+func activeTestJob(t *testing.T, p *LXD02) *printJob {
+	t.Helper()
+
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	if p.activeJob == nil {
+		t.Fatal("active job is nil")
+	}
+	return p.activeJob
 }
 
 func setFSMState(p *LXD02, state printerState) {
 	p.stateMu.Lock()
 	p.state = state
-	if p.printFSM == nil {
-		p.printFSM = p.newPrintFSM(state)
-	} else {
-		p.printFSM.SetState(state.String())
-	}
+	p.activeJob.fsm.SetState(state.String())
 	p.stateMu.Unlock()
 }
 
@@ -122,20 +128,20 @@ func requireNoFinish(t *testing.T, finished <-chan struct{}) {
 func TestFSM(t *testing.T) {
 	t.Run("successful flow", func(t *testing.T) {
 		p := newFSMTestPrinter(3)
-		p.doneCh = make(chan error, 1)
+		job := activeTestJob(t, p)
 
 		initCalled := make(chan struct{})
 		releaseInit := make(chan struct{})
-		p.initSequenceHook = func() {
+		p.initSequenceHook = func(job *printJob) {
 			close(initCalled)
 			<-releaseInit
-			p.emitEvent(fsmEvent{kind: eventInitComplete})
+			p.dispatchJobEvent(job, fsmEvent{kind: eventInitComplete})
 		}
 
 		streamStarts := make(chan int, 1)
-		p.printBufferHook = func(start int) {
+		p.printBufferHook = func(job *printJob, start int) {
 			streamStarts <- start
-			p.emitEvent(fsmEvent{kind: eventPacketsSent})
+			p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent})
 		}
 
 		var (
@@ -153,11 +159,9 @@ func TestFSM(t *testing.T) {
 			return append([]byte(nil), expectPrefix...), nil
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go p.runFSM(ctx)
+		go p.runFSM(job)
 
-		p.emitEvent(fsmEvent{kind: eventStart})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventStart})
 
 		select {
 		case <-initCalled:
@@ -186,8 +190,8 @@ func TestFSM(t *testing.T) {
 		}
 		callsMu.Unlock()
 
-		p.emitEvent(fsmEvent{kind: eventNotificationFinished})
-		if err := requireDone(t, p.doneCh); err != nil {
+		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationFinished})
+		if err := requireDone(t, job.doneCh); err != nil {
 			t.Fatalf("done error = %v, want nil", err)
 		}
 		waitForState(t, p, stateCompleted)
@@ -205,16 +209,15 @@ func TestFSM(t *testing.T) {
 	t.Run("init failure transitions and returns error", func(t *testing.T) {
 		wantErr := errors.New("init failed")
 		p := newFSMTestPrinter(1)
-		p.initSequenceHook = func() {
-			p.emitEvent(fsmEvent{kind: eventError, err: wantErr})
+		job := activeTestJob(t, p)
+		p.initSequenceHook = func(job *printJob) {
+			p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: wantErr})
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go p.runFSM(ctx)
+		go p.runFSM(job)
 
-		p.emitEvent(fsmEvent{kind: eventStart})
-		if err := requireDone(t, p.doneCh); !errors.Is(err, wantErr) {
+		p.dispatchJobEvent(job, fsmEvent{kind: eventStart})
+		if err := requireDone(t, job.doneCh); !errors.Is(err, wantErr) {
 			t.Fatalf("done error = %v, want %v", err, wantErr)
 		}
 		waitForState(t, p, stateFailed)
@@ -223,19 +226,18 @@ func TestFSM(t *testing.T) {
 	t.Run("begin command failure transitions and returns error", func(t *testing.T) {
 		wantErr := errors.New("begin failed")
 		p := newFSMTestPrinter(1)
-		p.initSequenceHook = func() {
-			p.emitEvent(fsmEvent{kind: eventInitComplete})
+		job := activeTestJob(t, p)
+		p.initSequenceHook = func(job *printJob) {
+			p.dispatchJobEvent(job, fsmEvent{kind: eventInitComplete})
 		}
 		p.sendAndWaitHook = func([]byte, []byte, time.Duration) ([]byte, error) {
 			return nil, wantErr
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go p.runFSM(ctx)
+		go p.runFSM(job)
 
-		p.emitEvent(fsmEvent{kind: eventStart})
-		err := requireDone(t, p.doneCh)
+		p.dispatchJobEvent(job, fsmEvent{kind: eventStart})
+		err := requireDone(t, job.doneCh)
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("done error = %v, want %v", err, wantErr)
 		}
@@ -245,17 +247,16 @@ func TestFSM(t *testing.T) {
 	t.Run("final command failure transitions and returns error", func(t *testing.T) {
 		wantErr := errors.New("final failed")
 		p := newFSMTestPrinter(1)
+		job := activeTestJob(t, p)
 		setFSMState(p, stateWaitingRetry)
 		p.sendAndWaitHook = func([]byte, []byte, time.Duration) ([]byte, error) {
 			return nil, wantErr
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go p.runFSM(ctx)
+		go p.runFSM(job)
 
-		p.emitEvent(fsmEvent{kind: eventNotificationFinished})
-		err := requireDone(t, p.doneCh)
+		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationFinished})
+		err := requireDone(t, job.doneCh)
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("done error = %v, want %v", err, wantErr)
 		}
@@ -264,28 +265,29 @@ func TestFSM(t *testing.T) {
 
 	t.Run("packet send failure emits error", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
+		job := activeTestJob(t, p)
 		wantErr := errors.New("packet failed")
 		p.sendPacketHook = func([]byte) error {
 			return wantErr
 		}
 
-		p.printBuffer(0)
-		got := requireEvent(t, p.eventCh, eventError)
-		if !errors.Is(got.err, wantErr) {
-			t.Fatalf("event error = %v, want %v", got.err, wantErr)
+		p.printBuffer(job, 0)
+		err := requireDone(t, job.doneCh)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("done error = %v, want %v", err, wantErr)
 		}
 	})
 
 	t.Run("context cancellation returns cancellation error", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
-		p.initSequenceHook = func() {
-			p.emitEvent(fsmEvent{kind: eventInitComplete})
+		p.initSequenceHook = func(job *printJob) {
+			p.dispatchJobEvent(job, fsmEvent{kind: eventInitComplete})
 		}
 		p.sendAndWaitHook = func(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error) {
 			return append([]byte(nil), expectPrefix...), nil
 		}
 		streamStarted := make(chan struct{})
-		p.printBufferHook = func(int) {
+		p.printBufferHook = func(*printJob, int) {
 			close(streamStarted)
 		}
 
@@ -314,10 +316,11 @@ func TestFSM(t *testing.T) {
 
 	t.Run("hold during printing cancels stream and pauses", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
+		job := activeTestJob(t, p)
 		setFSMState(p, statePrinting)
 		cancelled := make(chan struct{})
 		var once sync.Once
-		p.printCancel = func() {
+		job.printCancel = func() {
 			once.Do(func() { close(cancelled) })
 		}
 
@@ -358,9 +361,10 @@ func TestFSM(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newFSMTestPrinter(10)
+			job := activeTestJob(t, p)
 			setFSMState(p, tc.state)
 			starts := make(chan int, 1)
-			p.printBufferHook = func(start int) {
+			p.printBufferHook = func(_ *printJob, start int) {
 				starts <- start
 			}
 
@@ -375,28 +379,29 @@ func TestFSM(t *testing.T) {
 			case <-time.After(fsmWaitTimeout):
 				t.Fatal("print stream was not restarted")
 			}
+
+			job.cancel()
 		})
 	}
 
 	t.Run("duplicate error and cancel complete once without blocking", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
+		job := activeTestJob(t, p)
 		setFSMState(p, statePrinting)
-		p.doneCh = make(chan error, 2)
 
 		p.transition(eventError, nil)
 		p.transition(eventCancel, nil)
 
-		if err := requireDone(t, p.doneCh); !errors.Is(err, errPrintFailed) {
+		if err := requireDone(t, job.doneCh); !errors.Is(err, errPrintFailed) {
 			t.Fatalf("done error = %v, want %v", err, errPrintFailed)
 		}
-		requireNoDone(t, p.doneCh)
+		requireNoDone(t, job.doneCh)
 		waitForState(t, p, stateFailed)
 	})
 
 	t.Run("cancel after failed does not block without a done receiver", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
 		setFSMState(p, stateFailed)
-		p.doneCh = make(chan error)
 		finished := make(chan struct{})
 
 		go func() {
@@ -408,6 +413,199 @@ func TestFSM(t *testing.T) {
 		case <-finished:
 		case <-time.After(fsmWaitTimeout):
 			t.Fatal("transition blocked without a done receiver")
+		}
+	})
+
+	t.Run("internal event is delivered when notification queue is full", func(t *testing.T) {
+		wantErr := errors.New("final failed")
+		p := newFSMTestPrinter(1)
+		job := activeTestJob(t, p)
+		setFSMState(p, stateWaitingRetry)
+		p.sendAndWaitHook = func([]byte, []byte, time.Duration) ([]byte, error) {
+			return nil, wantErr
+		}
+		for i := 0; i < cap(job.eventCh); i++ {
+			job.eventCh <- fsmEvent{kind: eventNotificationHold}
+		}
+
+		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationFinished})
+
+		err := requireDone(t, job.doneCh)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("done error = %v, want %v", err, wantErr)
+		}
+		waitForState(t, p, stateFailed)
+	})
+
+	t.Run("stale init completion does not affect next print", func(t *testing.T) {
+		p := newFSMTestPrinter(1)
+		var (
+			mu         sync.Mutex
+			firstJob   *printJob
+			secondJob  *printJob
+			initCalls  int
+			streamJobs []*printJob
+		)
+		firstInitStarted := make(chan struct{})
+		releaseFirstInit := make(chan struct{})
+		secondStreamStarted := make(chan struct{})
+		p.initSequenceHook = func(job *printJob) {
+			mu.Lock()
+			initCalls++
+			call := initCalls
+			if call == 1 {
+				firstJob = job
+			} else if call == 2 {
+				secondJob = job
+			}
+			mu.Unlock()
+
+			if call == 1 {
+				close(firstInitStarted)
+				<-releaseFirstInit
+				p.dispatchJobEvent(job, fsmEvent{kind: eventInitComplete})
+				return
+			}
+			p.dispatchJobEvent(job, fsmEvent{kind: eventInitComplete})
+		}
+		p.sendAndWaitHook = func(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error) {
+			return append([]byte(nil), expectPrefix...), nil
+		}
+		p.printBufferHook = func(job *printJob, start int) {
+			mu.Lock()
+			streamJobs = append(streamJobs, job)
+			mu.Unlock()
+			if start != 0 {
+				t.Errorf("stream start = %d, want 0", start)
+			}
+			close(secondStreamStarted)
+		}
+
+		ctxA, cancelA := context.WithCancel(context.Background())
+		errA := make(chan error, 1)
+		go func() {
+			errA <- p.printPackets(ctxA, p.buffer)
+		}()
+		select {
+		case <-firstInitStarted:
+		case <-time.After(fsmWaitTimeout):
+			t.Fatal("first init did not start")
+		}
+		cancelA()
+		if err := requireDone(t, errA); !errors.Is(err, context.Canceled) {
+			t.Fatalf("first print error = %v, want context.Canceled", err)
+		}
+
+		ctxB, cancelB := context.WithCancel(context.Background())
+		defer cancelB()
+		errB := make(chan error, 1)
+		go func() {
+			errB <- p.printPackets(ctxB, p.buffer)
+		}()
+		select {
+		case <-secondStreamStarted:
+		case <-time.After(fsmWaitTimeout):
+			t.Fatal("second print stream did not start")
+		}
+
+		close(releaseFirstInit)
+		time.Sleep(fsmBlockTimeout)
+
+		mu.Lock()
+		streamCount := len(streamJobs)
+		streamJob := streamJobs[0]
+		gotFirstJob := firstJob
+		gotSecondJob := secondJob
+		mu.Unlock()
+		if gotFirstJob == nil || gotSecondJob == nil {
+			t.Fatal("expected both jobs to be recorded")
+		}
+		if streamCount != 1 {
+			t.Fatalf("stream starts = %d, want 1", streamCount)
+		}
+		if streamJob != gotSecondJob {
+			t.Fatal("stream started for a job other than the second job")
+		}
+
+		p.dispatchJobEvent(gotSecondJob, fsmEvent{kind: eventPacketsSent})
+		p.dispatchJobEvent(gotSecondJob, fsmEvent{kind: eventNotificationFinished})
+		if err := requireDone(t, errB); err != nil {
+			t.Fatalf("second print error = %v, want nil", err)
+		}
+	})
+
+	t.Run("stale packet stream event does not affect next print", func(t *testing.T) {
+		p := newFSMTestPrinter(1)
+		staleDone := make(chan struct{})
+		var (
+			mu        sync.Mutex
+			firstJob  *printJob
+			secondJob *printJob
+			starts    int
+		)
+		p.initSequenceHook = func(job *printJob) {
+			p.dispatchJobEvent(job, fsmEvent{kind: eventInitComplete})
+		}
+		p.sendAndWaitHook = func(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error) {
+			return append([]byte(nil), expectPrefix...), nil
+		}
+		p.printBufferHook = func(job *printJob, start int) {
+			mu.Lock()
+			starts++
+			call := starts
+			if call == 1 {
+				firstJob = job
+			} else if call == 2 {
+				secondJob = job
+			}
+			mu.Unlock()
+			if call == 1 {
+				go func() {
+					<-staleDone
+					p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent})
+				}()
+			}
+		}
+
+		ctxA, cancelA := context.WithCancel(context.Background())
+		errA := make(chan error, 1)
+		go func() {
+			errA <- p.printPackets(ctxA, p.buffer)
+		}()
+		waitUntil(t, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return firstJob != nil
+		})
+		cancelA()
+		if err := requireDone(t, errA); !errors.Is(err, context.Canceled) {
+			t.Fatalf("first print error = %v, want context.Canceled", err)
+		}
+
+		ctxB, cancelB := context.WithCancel(context.Background())
+		defer cancelB()
+		errB := make(chan error, 1)
+		go func() {
+			errB <- p.printPackets(ctxB, p.buffer)
+		}()
+		waitUntil(t, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return secondJob != nil
+		})
+
+		close(staleDone)
+		time.Sleep(fsmBlockTimeout)
+		waitForState(t, p, statePrinting)
+		requireNoDone(t, errB)
+
+		mu.Lock()
+		gotSecondJob := secondJob
+		mu.Unlock()
+		p.dispatchJobEvent(gotSecondJob, fsmEvent{kind: eventPacketsSent})
+		p.dispatchJobEvent(gotSecondJob, fsmEvent{kind: eventNotificationFinished})
+		if err := requireDone(t, errB); err != nil {
+			t.Fatalf("second print error = %v, want nil", err)
 		}
 	})
 }
@@ -441,13 +639,14 @@ func TestNotificationWorker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newFSMTestPrinter(1)
+			job := activeTestJob(t, p)
 			notifyCh := make(chan lxd02notification, 1)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			go p.worker(ctx, notifyCh)
 
 			notifyCh <- tc.ntf
-			got := requireEvent(t, p.eventCh, tc.want)
+			got := requireEvent(t, job.eventCh, tc.want)
 			if tc.want == eventNotificationRetransmit && !bytes.Equal(got.data, tc.ntf.data) {
 				t.Fatalf("retransmit data = % x, want % x", got.data, tc.ntf.data)
 			}
@@ -456,7 +655,9 @@ func TestNotificationWorker(t *testing.T) {
 
 	t.Run("no active event receiver does not block worker", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
-		p.eventCh = nil
+		p.stateMu.Lock()
+		p.activeJob = nil
+		p.stateMu.Unlock()
 		notifyCh := make(chan lxd02notification)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -478,4 +679,22 @@ func TestNotificationWorker(t *testing.T) {
 			}
 		}
 	})
+}
+
+func waitUntil(t *testing.T, fn func() bool) {
+	t.Helper()
+
+	deadline := time.After(fsmWaitTimeout)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		if fn() {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for condition")
+		case <-tick.C:
+		}
+	}
 }
