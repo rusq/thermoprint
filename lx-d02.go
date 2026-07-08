@@ -19,6 +19,7 @@ import (
 	"golang.org/x/image/font"
 	"tinygo.org/x/bluetooth"
 
+	"github.com/looplab/fsm"
 	"github.com/rusq/thermoprint/bitmap"
 )
 
@@ -61,8 +62,10 @@ type LXD02 struct {
 	stateMu     sync.Mutex
 	state       printerState
 	eventCh     chan fsmEvent
-	doneCh      chan struct{}
+	doneCh      chan error
+	doneOnce    sync.Once
 	printCancel context.CancelFunc
+	printFSM    *fsm.FSM
 
 	responseMu    sync.Mutex
 	waitingPrefix []byte
@@ -318,7 +321,11 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 		case <-ctx.Done():
 			slog.Debug("Worker context done, exiting")
 			return
-		case ntf := <-notifyCh:
+		case ntf, ok := <-notifyCh:
+			if !ok {
+				slog.Debug("notification channel closed, worker exiting")
+				return
+			}
 			lg := slog.With("instruction", ntf.prefix, "data", fmt.Sprintf("% x", ntf.data))
 			lg.DebugContext(ctx, "received notification")
 			switch ntf.prefix {
@@ -336,14 +343,14 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 				}
 				if st.NoPaper {
 					slog.ErrorContext(ctx, "no paper")
-					p.eventCh <- fsmEvent{kind: eventError}
+					p.routeNotificationEvent(fsmEvent{kind: eventError, err: errors.New("printer reported no paper")})
 				}
 			case ntHold:
-				p.eventCh <- fsmEvent{kind: eventNotificationHold}
+				p.routeNotificationEvent(fsmEvent{kind: eventNotificationHold})
 			case ntRetransmit:
-				p.eventCh <- fsmEvent{kind: eventNotificationRetransmit, data: ntf.data}
+				p.routeNotificationEvent(fsmEvent{kind: eventNotificationRetransmit, data: ntf.data})
 			case ntFinished:
-				p.eventCh <- fsmEvent{kind: eventNotificationFinished}
+				p.routeNotificationEvent(fsmEvent{kind: eventNotificationFinished})
 			default:
 				lg.WarnContext(ctx, "unsupported command")
 			}
@@ -412,27 +419,57 @@ func (p *LXD02) PrintRAW(ctx context.Context, data [][]byte) error {
 // printPackets is the low level routine that starts the FSM and sends the
 // encoded image data to the printer.
 func (p *LXD02) printPackets(ctx context.Context, packets [][]byte) error {
-	p.doneCh = make(chan struct{})
-	p.eventCh = make(chan fsmEvent, 10)
 	p.loadBuffer(packets)
+
+	doneCh := make(chan error, 1)
+	eventCh := make(chan fsmEvent, 10)
+	p.stateMu.Lock()
+	p.doneCh = doneCh
+	p.doneOnce = sync.Once{}
+	p.eventCh = eventCh
+	p.printCancel = nil
+	p.state = stateIdle
+	p.printFSM = p.newPrintFSM(stateIdle)
+	p.stateMu.Unlock()
 
 	// pctx is the context for the FSM, it will be cancelled when the
 	// print job is done or if the context is cancelled.  It will stop
 	// the FSM goroutine.
-	pctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	pctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		p.cancelPrintBuffer()
+		p.stateMu.Lock()
+		if p.eventCh == eventCh {
+			p.eventCh = nil
+			p.doneCh = nil
+			p.printFSM = nil
+			p.printCancel = nil
+		}
+		p.stateMu.Unlock()
+	}()
 
 	go p.runFSM(pctx)
 
-	p.eventCh <- fsmEvent{kind: eventStart}
+	p.emitEvent(fsmEvent{kind: eventStart})
 
 	select {
-	case <-p.doneCh:
+	case err := <-doneCh:
+		if err != nil {
+			return err
+		}
 		slog.Info("print completed successfully")
 		return nil
 	case <-ctx.Done():
-		p.eventCh <- fsmEvent{kind: eventCancel}
-		return errors.New("print job timed out or cancelled")
+		p.transitionEvent(fsmEvent{kind: eventCancel, err: ctx.Err()})
+		select {
+		case err := <-doneCh:
+			if err != nil {
+				return err
+			}
+		default:
+		}
+		return ctx.Err()
 	}
 }
 
@@ -469,12 +506,14 @@ var errBufferEmpty = errors.New("buffer is empty")
 // packet n.
 func (p *LXD02) printBuffer(start int) {
 	if len(p.buffer) == 0 || start >= len(p.buffer) {
-		p.eventCh <- fsmEvent{kind: eventError}
+		p.emitEvent(fsmEvent{kind: eventError, err: errBufferEmpty})
 		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	p.stateMu.Lock()
 	p.printCancel = cancel
+	p.stateMu.Unlock()
 
 	go func() {
 		defer cancel()
@@ -491,14 +530,13 @@ func (p *LXD02) printBuffer(start int) {
 				err := p.sendPacket(p.buffer[i])
 				if err != nil {
 					slog.Error("Failed to send packet", "packet", i, "error", err)
-					p.eventCh <- fsmEvent{kind: eventError}
+					p.emitEvent(fsmEvent{kind: eventError, err: fmt.Errorf("send packet %d: %w", i, err)})
 					return
 				}
 			}
 		}
 
-		slog.Info("All packets sent, waiting for printer to complete (5a06)")
-		p.eventCh <- fsmEvent{kind: eventNotificationFinished}
+		p.emitEvent(fsmEvent{kind: eventPacketsSent})
 	}()
 }
 
@@ -524,12 +562,12 @@ func (p *LXD02) sendInitSequence() {
 		expectPrefix := cmd[:2]
 		resp, err := p.sendAndWait(cmd, expectPrefix, responseTimeout)
 		if err != nil {
-			p.eventCh <- fsmEvent{kind: eventError}
+			p.emitEvent(fsmEvent{kind: eventError, err: fmt.Errorf("send init command % x: %w", expectPrefix, err)})
 			return
 		}
 		slog.Debug("init ack", "prefix", fmt.Sprintf("% x", expectPrefix), "response", fmt.Sprintf("% x", resp))
 	}
-	p.eventCh <- fsmEvent{kind: eventInitComplete}
+	p.emitEvent(fsmEvent{kind: eventInitComplete})
 }
 
 func extractRetryPacketIndex(data []byte) int {

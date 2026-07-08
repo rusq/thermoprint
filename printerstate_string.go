@@ -23,8 +23,9 @@ const _printerState_name = "IdleInitializingReadyPrintingPausedWaitingRetryCompl
 var _printerState_index = [...]uint8{0, 4, 16, 21, 29, 35, 47, 56, 62}
 
 func (i printerState) String() string {
-	if i < 0 || i >= printerState(len(_printerState_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_printerState_index)-1 {
 		return "printerState(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _printerState_name[_printerState_index[i]:_printerState_index[i+1]]
+	return _printerState_name[_printerState_index[idx]:_printerState_index[idx+1]]
 }

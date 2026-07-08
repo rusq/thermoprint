@@ -22,9 +22,9 @@ const _JobState_name = "PendingPendingHeldProcessingProcessingStoppedCancelledAb
 var _JobState_index = [...]uint8{0, 7, 18, 28, 45, 54, 61, 70}
 
 func (i JobState) String() string {
-	i -= 3
-	if i < 0 || i >= JobState(len(_JobState_index)-1) {
-		return "JobState(" + strconv.FormatInt(int64(i+3), 10) + ")"
+	idx := int(i) - 3
+	if i < 3 || idx >= len(_JobState_index)-1 {
+		return "JobState(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _JobState_name[_JobState_index[i]:_JobState_index[i+1]]
+	return _JobState_name[_JobState_index[idx]:_JobState_index[idx+1]]
 }

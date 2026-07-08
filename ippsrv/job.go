@@ -38,7 +38,7 @@ type JobID int32
 // JobState represents the state of a job.
 // https://datatracker.ietf.org/doc/html/rfc2911#section-4.3.7
 //
-//go:generate stringer -trimprefix Job -type JobState
+//go:generate go tool stringer -trimprefix Job -type JobState
 type JobState int32
 
 const (

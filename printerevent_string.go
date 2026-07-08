@@ -13,17 +13,19 @@ func _() {
 	_ = x[eventNotificationRetransmit-2]
 	_ = x[eventNotificationFinished-3]
 	_ = x[eventInitComplete-4]
-	_ = x[eventCancel-5]
-	_ = x[eventError-6]
+	_ = x[eventPacketsSent-5]
+	_ = x[eventCancel-6]
+	_ = x[eventError-7]
 }
 
-const _printerEvent_name = "StartNotificationHoldNotificationRetransmitNotificationFinishedInitCompleteCancelError"
+const _printerEvent_name = "StartNotificationHoldNotificationRetransmitNotificationFinishedInitCompletePacketsSentCancelError"
 
-var _printerEvent_index = [...]uint8{0, 5, 21, 43, 63, 75, 81, 86}
+var _printerEvent_index = [...]uint8{0, 5, 21, 43, 63, 75, 86, 92, 97}
 
 func (i printerEvent) String() string {
-	if i < 0 || i >= printerEvent(len(_printerEvent_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_printerEvent_index)-1 {
 		return "printerEvent(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _printerEvent_name[_printerEvent_index[i]:_printerEvent_index[i+1]]
+	return _printerEvent_name[_printerEvent_index[idx]:_printerEvent_index[idx+1]]
 }
