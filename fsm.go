@@ -42,9 +42,10 @@ const (
 var errPrintFailed = errors.New("print job failed")
 
 type fsmEvent struct {
-	kind printerEvent
-	data []byte
-	err  error
+	kind     printerEvent
+	data     []byte
+	err      error
+	streamID uint64
 }
 
 type printJob struct {
@@ -55,6 +56,7 @@ type printJob struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	printCancel context.CancelFunc
+	printStream uint64
 }
 
 func (p *LXD02) newPrintJob(ctx context.Context) *printJob {
@@ -146,21 +148,13 @@ func (p *LXD02) runFSM(job *printJob) {
 	}
 }
 
-func (p *LXD02) transition(evt printerEvent, data []byte) {
-	job := p.currentJob()
-	if job == nil {
-		slog.Warn("Ignoring FSM event with no active print", "event", evt)
-		if evt == eventCancel || evt == eventError {
-			p.setState(stateFailed)
-		}
-		return
-	}
-	p.dispatchJobEvent(job, fsmEvent{kind: evt, data: data})
-}
-
 func (p *LXD02) dispatchJobEvent(job *printJob, evt fsmEvent) bool {
 	if !p.isActiveJob(job) {
 		slog.Warn("Ignoring stale FSM event", "event", evt.kind)
+		return false
+	}
+	if !p.isCurrentPrintStream(job, evt) {
+		slog.Warn("Ignoring stale packet stream event", "event", evt.kind, "stream", evt.streamID)
 		return false
 	}
 
@@ -249,6 +243,9 @@ func (p *LXD02) cancelPrintBuffer(job *printJob) {
 	p.stateMu.Lock()
 	cancel := job.printCancel
 	job.printCancel = nil
+	if p.activeJob == job {
+		job.printStream++
+	}
 	p.stateMu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -267,10 +264,24 @@ func (p *LXD02) isActiveJob(job *printJob) bool {
 	return job != nil && p.activeJob == job
 }
 
-func (p *LXD02) setState(state printerState) {
+func (p *LXD02) isCurrentPrintStream(job *printJob, evt fsmEvent) bool {
+	if evt.streamID == 0 {
+		return evt.kind != eventPacketsSent
+	}
+
 	p.stateMu.Lock()
-	p.state = state
-	p.stateMu.Unlock()
+	defer p.stateMu.Unlock()
+	return p.activeJob == job && job.printStream == evt.streamID
+}
+
+func (p *LXD02) nextPrintStream(job *printJob) (uint64, bool) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	if p.activeJob != job {
+		return 0, false
+	}
+	job.printStream++
+	return job.printStream, true
 }
 
 func (p *LXD02) setStateForJob(job *printJob, state printerState) {
@@ -312,11 +323,15 @@ func (p *LXD02) sendAndWaitForFSM(data []byte, expectPrefix []byte, timeout time
 }
 
 func (p *LXD02) startPrintBuffer(job *printJob, start int) {
-	if p.printBufferHook != nil {
-		p.printBufferHook(job, start)
+	streamID, ok := p.nextPrintStream(job)
+	if !ok {
 		return
 	}
-	p.printBuffer(job, start)
+	if p.printBufferHook != nil {
+		p.printBufferHook(job, start, streamID)
+		return
+	}
+	p.printBuffer(job, start, streamID)
 }
 
 func fsmStateToPrinterState(state string) printerState {

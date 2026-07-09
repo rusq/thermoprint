@@ -70,7 +70,7 @@ type LXD02 struct {
 
 	initSequenceHook func(job *printJob)
 	sendAndWaitHook  func(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error)
-	printBufferHook  func(job *printJob, start int)
+	printBufferHook  func(job *printJob, start int, streamID uint64)
 	sendPacketHook   func(data []byte) error
 }
 
@@ -444,12 +444,20 @@ func (p *LXD02) printPackets(ctx context.Context, packets [][]byte) error {
 		slog.Info("print completed successfully")
 		return nil
 	case <-ctx.Done():
-		p.dispatchJobEvent(job, fsmEvent{kind: eventCancel, err: ctx.Err()})
 		select {
 		case err := <-job.doneCh:
 			if err != nil {
 				return err
 			}
+			slog.Info("print completed successfully")
+			return nil
+		default:
+		}
+
+		p.dispatchJobEvent(job, fsmEvent{kind: eventCancel, err: ctx.Err()})
+		select {
+		case err := <-job.doneCh:
+			return err
 		default:
 		}
 		return ctx.Err()
@@ -487,9 +495,9 @@ var errBufferEmpty = errors.New("buffer is empty")
 
 // printBuffer sends the buffer to printer starting from
 // packet n.
-func (p *LXD02) printBuffer(job *printJob, start int) {
+func (p *LXD02) printBuffer(job *printJob, start int, streamID uint64) {
 	if len(p.buffer) == 0 || start >= len(p.buffer) {
-		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: errBufferEmpty})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: errBufferEmpty, streamID: streamID})
 		return
 	}
 
@@ -513,13 +521,13 @@ func (p *LXD02) printBuffer(job *printJob, start int) {
 				err := p.sendPacket(p.buffer[i])
 				if err != nil {
 					slog.Error("Failed to send packet", "packet", i, "error", err)
-					p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("send packet %d: %w", i, err)})
+					p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("send packet %d: %w", i, err), streamID: streamID})
 					return
 				}
 			}
 		}
 
-		p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent})
+		p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent, streamID: streamID})
 	}()
 }
 
