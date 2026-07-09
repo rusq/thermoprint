@@ -425,6 +425,9 @@ func TestFSM(t *testing.T) {
 		if second.streamID == first.streamID {
 			t.Fatal("retransmit did not create a new stream ID")
 		}
+		if second.streamID != first.streamID+1 {
+			t.Fatalf("second stream ID = %d, want %d", second.streamID, first.streamID+1)
+		}
 
 		if ok := p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent, streamID: first.streamID}); ok {
 			t.Fatal("stale packet completion was accepted")

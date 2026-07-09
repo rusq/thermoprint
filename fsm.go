@@ -57,6 +57,7 @@ type printJob struct {
 	cancel      context.CancelFunc
 	printCancel context.CancelFunc
 	printStream uint64
+	printSeq    uint64
 }
 
 func (p *LXD02) newPrintJob(ctx context.Context) *printJob {
@@ -244,7 +245,7 @@ func (p *LXD02) cancelPrintBuffer(job *printJob) {
 	cancel := job.printCancel
 	job.printCancel = nil
 	if p.activeJob == job {
-		job.printStream++
+		job.printStream = 0
 	}
 	p.stateMu.Unlock()
 	if cancel != nil {
@@ -280,7 +281,8 @@ func (p *LXD02) nextPrintStream(job *printJob) (uint64, bool) {
 	if p.activeJob != job {
 		return 0, false
 	}
-	job.printStream++
+	job.printSeq++
+	job.printStream = job.printSeq
 	return job.printStream, true
 }
 
