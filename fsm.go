@@ -17,7 +17,6 @@ type printerState int
 const (
 	stateIdle printerState = iota
 	stateInitializing
-	stateReady
 	statePrinting
 	statePaused
 	stateWaitingRetry
@@ -76,7 +75,6 @@ func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 	states := []string{
 		stateIdle.String(),
 		stateInitializing.String(),
-		stateReady.String(),
 		statePrinting.String(),
 		statePaused.String(),
 		stateWaitingRetry.String(),
@@ -342,8 +340,6 @@ func fsmStateToPrinterState(state string) printerState {
 		return stateIdle
 	case stateInitializing.String():
 		return stateInitializing
-	case stateReady.String():
-		return stateReady
 	case statePrinting.String():
 		return statePrinting
 	case statePaused.String():
