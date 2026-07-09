@@ -49,6 +49,7 @@ type fsmEvent struct {
 
 type printJob struct {
 	fsm         *fsm.FSM
+	fsmMu       sync.Mutex
 	eventCh     chan fsmEvent
 	doneCh      chan error
 	doneOnce    sync.Once
@@ -124,7 +125,7 @@ func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 				go p.startPrintBuffer(job, packet)
 			},
 			"after_" + eventNotificationFinished.String(): func(_ context.Context, _ *fsm.Event) {
-				p.finishPrint(job)
+				go p.finishPrint(job)
 			},
 			"after_" + eventCancel.String(): func(_ context.Context, e *fsm.Event) {
 				p.failPrint(job, eventErr(e, context.Canceled))
@@ -153,6 +154,17 @@ func (p *LXD02) runFSM(job *printJob) {
 }
 
 func (p *LXD02) dispatchJobEvent(job *printJob, evt fsmEvent) bool {
+	if job == nil {
+		slog.Warn("Ignoring FSM event with no print job", "event", evt.kind)
+		return false
+	}
+
+	// Keep stream validation and transition application in one ordered section.
+	// Packet-stream goroutines dispatch directly while printer notifications are
+	// handled by runFSM, so both paths must agree on the current stream/state.
+	job.fsmMu.Lock()
+	defer job.fsmMu.Unlock()
+
 	if !p.isActiveJob(job) {
 		slog.Warn("Ignoring stale FSM event", "event", evt.kind)
 		return false

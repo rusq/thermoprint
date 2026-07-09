@@ -335,6 +335,10 @@ func TestFSM(t *testing.T) {
 		p := newFSMTestPrinter(1)
 		job := activeTestJob(t, p)
 		setFSMState(p, statePrinting)
+		p.stateMu.Lock()
+		job.printSeq = 7
+		job.printStream = 7
+		p.stateMu.Unlock()
 		cancelled := make(chan struct{})
 		var once sync.Once
 		job.printCancel = func() {
@@ -347,6 +351,11 @@ func TestFSM(t *testing.T) {
 		case <-cancelled:
 		case <-time.After(fsmWaitTimeout):
 			t.Fatal("printCancel was not called")
+		}
+		waitForState(t, p, statePaused)
+
+		if ok := p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent, streamID: 7}); ok {
+			t.Fatal("stale packet completion after hold was accepted")
 		}
 		waitForState(t, p, statePaused)
 	})
