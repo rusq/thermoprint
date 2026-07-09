@@ -116,8 +116,7 @@ func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 					slog.Debug("Hold signal received while waiting for printer completion")
 					return
 				}
-				slog.Warn("Hold signal received, pausing print job")
-				p.pausePrintBuffer(job)
+				slog.Warn("Hold signal received")
 			},
 			"after_" + eventNotificationRetransmit.String(): func(_ context.Context, e *fsm.Event) {
 				packet := extractRetryPacketIndex(eventData(e))
@@ -266,16 +265,6 @@ func (p *LXD02) cancelPrintBuffer(job *printJob) {
 	if p.activeJob == job {
 		job.printStream = 0
 	}
-	p.stateMu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
-
-func (p *LXD02) pausePrintBuffer(job *printJob) {
-	p.stateMu.Lock()
-	cancel := job.printCancel
-	job.printCancel = nil
 	p.stateMu.Unlock()
 	if cancel != nil {
 		cancel()

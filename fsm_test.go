@@ -331,7 +331,7 @@ func TestFSM(t *testing.T) {
 		}
 	})
 
-	t.Run("hold during printing pauses stream", func(t *testing.T) {
+	t.Run("hold during printing does not stop stream", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
 		job := activeTestJob(t, p)
 		setFSMState(p, statePrinting)
@@ -340,19 +340,14 @@ func TestFSM(t *testing.T) {
 		job.printStream = 7
 		p.stateMu.Unlock()
 		cancelled := make(chan struct{})
-		var once sync.Once
 		job.printCancel = func() {
-			once.Do(func() { close(cancelled) })
+			close(cancelled)
 		}
 
 		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationHold})
 
-		select {
-		case <-cancelled:
-		case <-time.After(fsmWaitTimeout):
-			t.Fatal("printCancel was not called")
-		}
 		waitForState(t, p, statePaused)
+		requireNoFinish(t, cancelled)
 	})
 
 	t.Run("packet completion after hold waits for printer completion", func(t *testing.T) {
@@ -363,19 +358,8 @@ func TestFSM(t *testing.T) {
 		job.printSeq = 7
 		job.printStream = 7
 		p.stateMu.Unlock()
-		cancelled := make(chan struct{})
-		var once sync.Once
-		job.printCancel = func() {
-			once.Do(func() { close(cancelled) })
-		}
 
 		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationHold})
-
-		select {
-		case <-cancelled:
-		case <-time.After(fsmWaitTimeout):
-			t.Fatal("printCancel was not called")
-		}
 		waitForState(t, p, statePaused)
 
 		if ok := p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent, streamID: 7}); !ok {
@@ -392,7 +376,11 @@ func TestFSM(t *testing.T) {
 		job.printSeq = 7
 		job.printStream = 7
 		p.stateMu.Unlock()
-		job.printCancel = func() {}
+		cancelled := make(chan struct{})
+		var cancelOnce sync.Once
+		job.printCancel = func() {
+			cancelOnce.Do(func() { close(cancelled) })
+		}
 		starts := make(chan fsmStreamStart, 1)
 		p.printBufferHook = func(_ *printJob, start int, streamID uint64) {
 			starts <- fsmStreamStart{start: start, streamID: streamID}
@@ -400,7 +388,13 @@ func TestFSM(t *testing.T) {
 
 		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationHold})
 		waitForState(t, p, statePaused)
+		requireNoFinish(t, cancelled)
 		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationRetransmit, data: []byte{0x5a, 0x05, 0x00, 0x04}})
+		select {
+		case <-cancelled:
+		case <-time.After(fsmWaitTimeout):
+			t.Fatal("printCancel was not called on retransmit")
+		}
 		second := requireStreamStart(t, starts)
 		if second.start != 4 {
 			t.Fatalf("second stream start = %d, want 4", second.start)
