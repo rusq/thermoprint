@@ -166,11 +166,14 @@ func (p *LXD02) dispatchJobEvent(job *printJob, evt fsmEvent) bool {
 	if err := job.fsm.Event(context.Background(), evt.kind.String(), evt.data, evt.err); err != nil {
 		var invalid fsm.InvalidEventError
 		var unknown fsm.UnknownEventError
+		var noTransition fsm.NoTransitionError
 		switch {
 		case errors.As(err, &invalid):
 			log.Warn("Ignoring inappropriate FSM event", "error", err)
 		case errors.As(err, &unknown):
 			log.Warn("Ignoring unknown FSM event", "error", err)
+		case errors.As(err, &noTransition) && noTransition.Err == nil:
+			log.Debug("Ignoring no-op FSM event")
 		default:
 			log.Warn("FSM event returned error", "error", err)
 		}
