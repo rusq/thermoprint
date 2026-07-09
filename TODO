@@ -1,5 +1,5 @@
 - [TODO] IPP protocol revisit
-- [TODO] reimplement printer FSM on looplab/fsm
+- [DONE] reimplement printer FSM on looplab/fsm
 - [DONE] requests:
 	- [DONE] 11 - get printer attributes
 	- [DONE] 2 -  print

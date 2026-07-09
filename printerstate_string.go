@@ -10,21 +10,21 @@ func _() {
 	var x [1]struct{}
 	_ = x[stateIdle-0]
 	_ = x[stateInitializing-1]
-	_ = x[stateReady-2]
-	_ = x[statePrinting-3]
-	_ = x[statePaused-4]
-	_ = x[stateWaitingRetry-5]
-	_ = x[stateCompleted-6]
-	_ = x[stateFailed-7]
+	_ = x[statePrinting-2]
+	_ = x[statePaused-3]
+	_ = x[stateWaitingRetry-4]
+	_ = x[stateCompleted-5]
+	_ = x[stateFailed-6]
 }
 
-const _printerState_name = "IdleInitializingReadyPrintingPausedWaitingRetryCompletedFailed"
+const _printerState_name = "IdleInitializingPrintingPausedWaitingRetryCompletedFailed"
 
-var _printerState_index = [...]uint8{0, 4, 16, 21, 29, 35, 47, 56, 62}
+var _printerState_index = [...]uint8{0, 4, 16, 24, 30, 42, 51, 57}
 
 func (i printerState) String() string {
-	if i < 0 || i >= printerState(len(_printerState_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_printerState_index)-1 {
 		return "printerState(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _printerState_name[_printerState_index[i]:_printerState_index[i+1]]
+	return _printerState_name[_printerState_index[idx]:_printerState_index[idx+1]]
 }
