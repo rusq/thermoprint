@@ -89,6 +89,7 @@ func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 			{Name: eventInitComplete.String(), Src: []string{stateInitializing.String()}, Dst: statePrinting.String()},
 			{Name: eventPacketsSent.String(), Src: []string{statePrinting.String()}, Dst: stateWaitingRetry.String()},
 			{Name: eventNotificationHold.String(), Src: []string{statePrinting.String()}, Dst: statePaused.String()},
+			{Name: eventNotificationHold.String(), Src: []string{stateWaitingRetry.String()}, Dst: stateWaitingRetry.String()},
 			{Name: eventNotificationRetransmit.String(), Src: []string{statePrinting.String(), statePaused.String(), stateWaitingRetry.String()}, Dst: statePrinting.String()},
 			{Name: eventNotificationFinished.String(), Src: []string{stateWaitingRetry.String()}, Dst: stateCompleted.String()},
 			{Name: eventCancel.String(), Src: states, Dst: stateFailed.String()},
@@ -108,7 +109,11 @@ func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 			"after_" + eventPacketsSent.String(): func(_ context.Context, _ *fsm.Event) {
 				slog.Info("All packets sent, waiting for printer to complete (5a06)")
 			},
-			"after_" + eventNotificationHold.String(): func(_ context.Context, _ *fsm.Event) {
+			"after_" + eventNotificationHold.String(): func(_ context.Context, e *fsm.Event) {
+				if e.Src == stateWaitingRetry.String() {
+					slog.Debug("Hold signal received while waiting for printer completion")
+					return
+				}
 				slog.Warn("Hold signal received, pausing print job")
 				p.cancelPrintBuffer(job)
 			},

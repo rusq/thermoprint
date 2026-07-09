@@ -351,6 +351,23 @@ func TestFSM(t *testing.T) {
 		waitForState(t, p, statePaused)
 	})
 
+	t.Run("hold while waiting for completion stays waiting", func(t *testing.T) {
+		p := newFSMTestPrinter(1)
+		job := activeTestJob(t, p)
+		setFSMState(p, stateWaitingRetry)
+		cancelled := make(chan struct{})
+		job.printCancel = func() {
+			close(cancelled)
+		}
+
+		if ok := p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationHold}); !ok {
+			t.Fatal("hold in waiting retry was ignored")
+		}
+
+		waitForState(t, p, stateWaitingRetry)
+		requireNoFinish(t, cancelled)
+	})
+
 	for _, tc := range []struct {
 		name  string
 		state printerState
