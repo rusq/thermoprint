@@ -89,6 +89,7 @@ func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 			{Name: eventStart.String(), Src: []string{stateIdle.String(), stateCompleted.String(), stateFailed.String()}, Dst: stateInitializing.String()},
 			{Name: eventInitComplete.String(), Src: []string{stateInitializing.String()}, Dst: statePrinting.String()},
 			{Name: eventPacketsSent.String(), Src: []string{statePrinting.String()}, Dst: stateWaitingRetry.String()},
+			{Name: eventPacketsSent.String(), Src: []string{statePaused.String()}, Dst: stateWaitingRetry.String()},
 			{Name: eventNotificationHold.String(), Src: []string{statePrinting.String()}, Dst: statePaused.String()},
 			{Name: eventNotificationHold.String(), Src: []string{stateWaitingRetry.String()}, Dst: stateWaitingRetry.String()},
 			{Name: eventNotificationRetransmit.String(), Src: []string{statePrinting.String(), statePaused.String(), stateWaitingRetry.String()}, Dst: statePrinting.String()},
@@ -116,7 +117,7 @@ func (p *LXD02) newPrintFSM(job *printJob, initial printerState) *fsm.FSM {
 					return
 				}
 				slog.Warn("Hold signal received, pausing print job")
-				p.cancelPrintBuffer(job)
+				p.pausePrintBuffer(job)
 			},
 			"after_" + eventNotificationRetransmit.String(): func(_ context.Context, e *fsm.Event) {
 				packet := extractRetryPacketIndex(eventData(e))
@@ -265,6 +266,16 @@ func (p *LXD02) cancelPrintBuffer(job *printJob) {
 	if p.activeJob == job {
 		job.printStream = 0
 	}
+	p.stateMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (p *LXD02) pausePrintBuffer(job *printJob) {
+	p.stateMu.Lock()
+	cancel := job.printCancel
+	job.printCancel = nil
 	p.stateMu.Unlock()
 	if cancel != nil {
 		cancel()

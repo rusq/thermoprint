@@ -331,7 +331,31 @@ func TestFSM(t *testing.T) {
 		}
 	})
 
-	t.Run("hold during printing cancels stream and pauses", func(t *testing.T) {
+	t.Run("hold during printing pauses stream", func(t *testing.T) {
+		p := newFSMTestPrinter(1)
+		job := activeTestJob(t, p)
+		setFSMState(p, statePrinting)
+		p.stateMu.Lock()
+		job.printSeq = 7
+		job.printStream = 7
+		p.stateMu.Unlock()
+		cancelled := make(chan struct{})
+		var once sync.Once
+		job.printCancel = func() {
+			once.Do(func() { close(cancelled) })
+		}
+
+		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationHold})
+
+		select {
+		case <-cancelled:
+		case <-time.After(fsmWaitTimeout):
+			t.Fatal("printCancel was not called")
+		}
+		waitForState(t, p, statePaused)
+	})
+
+	t.Run("packet completion after hold waits for printer completion", func(t *testing.T) {
 		p := newFSMTestPrinter(1)
 		job := activeTestJob(t, p)
 		setFSMState(p, statePrinting)
@@ -354,10 +378,38 @@ func TestFSM(t *testing.T) {
 		}
 		waitForState(t, p, statePaused)
 
-		if ok := p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent, streamID: 7}); ok {
-			t.Fatal("stale packet completion after hold was accepted")
+		if ok := p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent, streamID: 7}); !ok {
+			t.Fatal("packet completion after hold was ignored")
 		}
+		waitForState(t, p, stateWaitingRetry)
+	})
+
+	t.Run("packet completion before paused retransmit is ignored", func(t *testing.T) {
+		p := newFSMTestPrinter(10)
+		job := activeTestJob(t, p)
+		setFSMState(p, statePrinting)
+		p.stateMu.Lock()
+		job.printSeq = 7
+		job.printStream = 7
+		p.stateMu.Unlock()
+		job.printCancel = func() {}
+		starts := make(chan fsmStreamStart, 1)
+		p.printBufferHook = func(_ *printJob, start int, streamID uint64) {
+			starts <- fsmStreamStart{start: start, streamID: streamID}
+		}
+
+		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationHold})
 		waitForState(t, p, statePaused)
+		p.dispatchJobEvent(job, fsmEvent{kind: eventNotificationRetransmit, data: []byte{0x5a, 0x05, 0x00, 0x04}})
+		second := requireStreamStart(t, starts)
+		if second.start != 4 {
+			t.Fatalf("second stream start = %d, want 4", second.start)
+		}
+
+		if ok := p.dispatchJobEvent(job, fsmEvent{kind: eventPacketsSent, streamID: 7}); ok {
+			t.Fatal("stale packet completion after retransmit was accepted")
+		}
+		waitForState(t, p, statePrinting)
 	})
 
 	t.Run("hold while waiting for completion stays waiting", func(t *testing.T) {
