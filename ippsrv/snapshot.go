@@ -58,7 +58,7 @@ func (s *Server) Snapshot() ServerSnapshot {
 		MaxDocumentSize: MaxDocumentSize,
 	}
 	if s.srv != nil {
-		snap.ListenAddr = s.srv.Addr
+		snap.ListenAddr = s.listenAddrValue()
 	}
 	if s.is != nil {
 		snap.BaseURL = s.is.baseURL

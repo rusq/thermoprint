@@ -2,6 +2,9 @@ package ippsrv
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"sync"
 	"testing"
 	"time"
 )
@@ -58,5 +61,46 @@ func TestServerSnapshotCopiesJobsAndPrinters(t *testing.T) {
 	got := server.Snapshot()
 	if len(got.Jobs[0].StateReasons) != len(job.StateReasons) {
 		t.Fatalf("snapshot exposed mutable job reasons: got %v", got.Jobs[0].StateReasons)
+	}
+}
+
+func TestServerSnapshotConcurrentWithListenAndServe(t *testing.T) {
+	printer := mustWrapDriver(t, testDriver{}, "test-printer", "Test Printer")
+	server, err := New(printer)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var shutdownOnce sync.Once
+	shutdown := func() error {
+		var err error
+		shutdownOnce.Do(func() {
+			err = server.Shutdown(context.Background())
+		})
+		return err
+	}
+	t.Cleanup(func() { _ = shutdown() })
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- server.ListenAndServe("127.0.0.1:0")
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if snap := server.Snapshot(); snap.ListenAddr != "" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for server listen address")
+		default:
+		}
+	}
+
+	if err := shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("ListenAndServe: %v", err)
 	}
 }

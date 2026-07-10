@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/OpenPrinting/goipp"
@@ -22,6 +23,9 @@ import (
 var MaxDocumentSize int64 = 104857600
 
 type Server struct {
+	mu         sync.RWMutex
+	listenAddr string
+
 	pp  []Printer       // List of printers managed by the server
 	srv *http.Server    // HTTP server instance
 	is  *basicIPPServer // IPP server instance
@@ -119,7 +123,7 @@ func (s *Server) Info(w io.Writer) {
 	for name := range s.is.Printer {
 		fmt.Fprintf(w, "  - %s\n", name)
 	}
-	fmt.Fprintf(w, "Server Address: %s\n", s.srv.Addr)
+	fmt.Fprintf(w, "Server Address: %s\n", s.listenAddrValue())
 	fmt.Fprintf(w, "Debug Mode: %t\n", s.debug)
 	fmt.Fprintf(w, "Max Document Size: %d bytes\n", MaxDocumentSize)
 
@@ -232,13 +236,27 @@ func (s *Server) ListenAndServe(addr string) error {
 	if err != nil {
 		return err
 	}
-	s.srv.Addr = addr
+	s.setListenAddr(addr)
 	if s.bonjour.enabled {
 		if err := s.startBonjour(l.Addr().(*net.TCPAddr)); err != nil {
 			slog.Warn("bonjour advertisement disabled", "error", err)
 		}
 	}
 	return s.srv.Serve(l)
+}
+
+func (s *Server) setListenAddr(addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.listenAddr = addr
+}
+
+func (s *Server) listenAddrValue() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.listenAddr
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
