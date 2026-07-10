@@ -58,9 +58,12 @@ type LXD02 struct {
 	buffer     [][]byte
 	rasteriser Rasteriser // Interface for rasterizing images
 
-	stateMu   sync.Mutex
-	state     printerState
-	activeJob *printJob
+	stateMu    sync.Mutex
+	state      printerState
+	activeJob  *printJob
+	lastStatus lxd02status
+	statusSeen bool
+	statusAt   time.Time
 
 	responseMu    sync.Mutex
 	waitingPrefix []byte
@@ -72,6 +75,18 @@ type LXD02 struct {
 	sendAndWaitHook  func(data []byte, expectPrefix []byte, timeout time.Duration) ([]byte, error)
 	printBufferHook  func(job *printJob, start int, streamID uint64)
 	sendPacketHook   func(data []byte) error
+}
+
+// PrinterSnapshot is a stable copy of observable LX-D02 state.
+type PrinterSnapshot struct {
+	Connected      bool
+	DryRun         bool
+	State          string
+	BatteryLevel   uint8
+	NoPaper        bool
+	Charging       bool
+	Charged        bool
+	LastStatusTime time.Time
 }
 
 var LXD02Rasteriser = &GenericRasteriser{
@@ -279,7 +294,7 @@ func (s lxd02status) String() string {
 
 func parseStatus(data []byte) (lxd02status, error) {
 	if !bytes.HasPrefix(data, prefixStatus) || len(data) < 6 {
-		return lxd02status{}, fmt.Errorf("invalid status data prefix or length: %x", data[:2])
+		return lxd02status{}, fmt.Errorf("invalid status data prefix or length: %x", data)
 	}
 	payload := data[2:]
 	status := lxd02status{
@@ -330,6 +345,7 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 					slog.Error("Failed to parse status", "error", err)
 					continue
 				}
+				p.storeStatus(st)
 				slog.DebugContext(ctx, "status", "status", st)
 				if st.BatteryLevel < gBatCritical {
 					slog.ErrorContext(ctx, "BATTERY LEVEL CRITICAL", "level", st.BatteryLevel)
@@ -351,6 +367,34 @@ func (p *LXD02) worker(ctx context.Context, notifyCh <-chan lxd02notification) {
 			}
 		}
 	}
+}
+
+func (p *LXD02) storeStatus(st lxd02status) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.lastStatus = st
+	p.statusSeen = true
+	p.statusAt = time.Now()
+}
+
+// Snapshot returns the current connection, print FSM, and last decoded status.
+func (p *LXD02) Snapshot() PrinterSnapshot {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+
+	snap := PrinterSnapshot{
+		Connected: p.connected.Load(),
+		DryRun:    p.options.dryrun,
+		State:     p.state.String(),
+	}
+	if p.statusSeen {
+		snap.BatteryLevel = p.lastStatus.BatteryLevel
+		snap.NoPaper = p.lastStatus.NoPaper
+		snap.Charging = p.lastStatus.Charging
+		snap.Charged = p.lastStatus.Charged
+		snap.LastStatusTime = p.statusAt
+	}
+	return snap
 }
 
 func (p *LXD02) Disconnect() error {

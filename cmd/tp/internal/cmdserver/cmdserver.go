@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/rusq/thermoprint/cmd/tp/internal/bootstrap"
 	"github.com/rusq/thermoprint/cmd/tp/internal/cfg"
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/base"
 	"github.com/rusq/thermoprint/ippsrv"
+	"golang.org/x/term"
 )
 
 var CmdServer = &base.Command{
@@ -32,6 +35,7 @@ var (
 	addr         string
 	protoDumpDir string
 	noMDNS       bool
+	noTUI        bool
 )
 
 func init() {
@@ -47,6 +51,10 @@ func init() {
 		"no-mdns",
 		false,
 		"disable Bonjour/DNS-SD printer advertisement")
+	CmdServer.Flag.BoolVar(&noTUI,
+		"no-tui",
+		false,
+		"disable the interactive dashboard and keep plain log output")
 }
 
 func runServer(ctx context.Context, cmd *base.Command, args []string) error {
@@ -77,8 +85,11 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 		return err
 	}
 	cfg.RegisterSigInfoReporter(s.Info)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	go func() {
-		<-ctx.Done()
+		<-runCtx.Done()
 		if err := s.Shutdown(context.Background()); err != nil {
 			slog.Error("error shutting down server", "err", err)
 		} else {
@@ -86,12 +97,52 @@ func runServer(ctx context.Context, cmd *base.Command, args []string) error {
 		}
 	}()
 
+	if useTUI := shouldUseTUI(noTUI, os.Stdout.Fd(), os.Stderr.Fd()); useTUI {
+		logs := newLogBuffer(400)
+		installTUILogger(logs, cfg.LogFile != "")
+		if cfg.LogFile == "" {
+			log.SetOutput(logs.Writer())
+		}
+		serverResult := newServerResult()
+		go func() {
+			slog.Info("starting server", "addr", addr)
+			serverResult.finish(listenAndServe(s, addr))
+		}()
+		if err := runDashboard(runCtx, s, p, logs, serverResult); err != nil {
+			base.SetExitStatus(base.SApplicationError)
+			return err
+		}
+		cancel()
+		if err := serverResult.wait(); err != nil {
+			base.SetExitStatus(base.SApplicationError)
+			return err
+		}
+		return nil
+	}
+
 	slog.Info("starting server", "addr", addr)
+	if err := listenAndServe(s, addr); err != nil {
+		base.SetExitStatus(base.SApplicationError)
+		return err
+	}
+	return nil
+}
+
+func listenAndServe(s *ippsrv.Server, addr string) error {
 	if err := s.ListenAndServe(addr); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		slog.Error("error starting server", "err", err)
+		return err
 	}
 	return nil
+}
+
+func shouldUseTUI(disabled bool, stdoutFD, stderrFD uintptr) bool {
+	return modeAllowsTUI(disabled, term.IsTerminal(int(stdoutFD)), term.IsTerminal(int(stderrFD)))
+}
+
+func modeAllowsTUI(disabled, stdoutTTY, stderrTTY bool) bool {
+	return !disabled && stdoutTTY && stderrTTY
 }

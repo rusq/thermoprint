@@ -154,6 +154,19 @@ const (
 	PSStopped
 )
 
+func (s PrinterState) String() string {
+	switch s {
+	case PSIdle:
+		return "Idle"
+	case PSProcessing:
+		return "Processing"
+	case PSStopped:
+		return "Stopped"
+	default:
+		return fmt.Sprintf("PrinterState(%d)", s)
+	}
+}
+
 func (p *basePrinter) State() PrinterState {
 	p.stateMu.RLock()
 	defer p.stateMu.RUnlock()
