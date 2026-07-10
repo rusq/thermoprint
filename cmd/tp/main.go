@@ -21,6 +21,7 @@ import (
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/help"
 )
 
+
 func init() {
 	base.ThermoprintCommand.Commands = []*base.Command{
 		// Add commands here.
@@ -222,3 +223,4 @@ func iftrue[T any](cond bool, t T, f T) T {
 	}
 	return f
 }
+

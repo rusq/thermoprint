@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/rusq/thermoprint"
 	"github.com/rusq/thermoprint/ippsrv"
 )
@@ -130,13 +131,15 @@ func (m dashboardModel) View() string {
 		return "starting dashboard..."
 	}
 	contentWidth := max(40, m.width)
-	header := titleStyle.Render("tp server") + " " + subtleStyle.Render("read-only dashboard")
+	header := titleStyle.Render("Thermoprint IPP Server") + " " + subtleStyle.Render("dashboard")
 	if m.err != nil {
 		header += " " + errorStyle.Render(m.err.Error())
 	}
 
-	leftWidth := max(38, contentWidth/2-2)
-	rightWidth := max(38, contentWidth-leftWidth-4)
+	const margin = 2
+
+	leftWidth := max(38, contentWidth/2-margin)
+	rightWidth := max(38, contentWidth-leftWidth-(4+margin))
 	statePanel := panelStyle.Width(leftWidth).Render(m.renderState())
 	jobsPanel := panelStyle.Width(rightWidth).Render(m.renderJobs())
 	body := lipgloss.JoinHorizontal(lipgloss.Top, statePanel, "  ", jobsPanel)
@@ -148,7 +151,7 @@ func (m dashboardModel) View() string {
 	}
 	logPanel := logPanelStyle.Width(contentWidth - 2).Height(logHeight).Render(m.renderLogs(logHeight - 2))
 
-	footer := subtleStyle.Render("q quit  tab focus logs  up/down scroll")
+	footer := subtleStyle.Render("? help")
 	if m.showHelp {
 		footer = subtleStyle.Render("q quit  tab focus logs  up/down/pgup/pgdown scroll  ? hide help")
 	}
