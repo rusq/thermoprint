@@ -22,6 +22,20 @@ type tickMsg time.Time
 type ctxDoneMsg struct{}
 type serverErrMsg struct{ err error }
 
+const (
+	minDashboardWidth = 40
+	minTopPanelWidth  = 38
+	minLogPanelHeight = 8
+
+	topPanelGap              = "  "
+	topPanelGapWidth         = 2
+	topPanelWidthReserve     = 4
+	logPanelWidthReserve     = 2
+	logPanelHeightReserve    = 2
+	dashboardHeightReserve   = 4
+	twoColumnWidthAdjustment = topPanelGapWidth
+)
+
 type dashboardModel struct {
 	ctx      context.Context
 	server   *ippsrv.Server
@@ -130,26 +144,24 @@ func (m dashboardModel) View() string {
 	if m.width == 0 {
 		return "starting dashboard..."
 	}
-	contentWidth := max(40, m.width)
+	contentWidth := max(minDashboardWidth, m.width)
 	header := titleStyle.Render("Thermoprint IPP Server") + " " + subtleStyle.Render("dashboard")
 	if m.err != nil {
 		header += " " + errorStyle.Render(m.err.Error())
 	}
 
-	const margin = 2
-
-	leftWidth := max(38, contentWidth/2-margin)
-	rightWidth := max(38, contentWidth-leftWidth-(4+margin))
+	leftWidth := max(minTopPanelWidth, contentWidth/2-twoColumnWidthAdjustment)
+	rightWidth := max(minTopPanelWidth, contentWidth-leftWidth-(topPanelWidthReserve+topPanelGapWidth))
 	statePanel := panelStyle.Width(leftWidth).Render(m.renderState())
 	jobsPanel := panelStyle.Width(rightWidth).Render(m.renderJobs())
-	body := lipgloss.JoinHorizontal(lipgloss.Top, statePanel, "  ", jobsPanel)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, statePanel, topPanelGap, jobsPanel)
 
-	logHeight := max(8, m.height-lipgloss.Height(header)-lipgloss.Height(body)-4)
+	logHeight := max(minLogPanelHeight, m.height-lipgloss.Height(header)-lipgloss.Height(body)-dashboardHeightReserve)
 	logPanelStyle := panelStyle
 	if m.focusLogs {
 		logPanelStyle = focusStyle
 	}
-	logPanel := logPanelStyle.Width(contentWidth - 2).Height(logHeight).Render(m.renderLogs(logHeight - 2))
+	logPanel := logPanelStyle.Width(contentWidth - logPanelWidthReserve).Height(logHeight).Render(m.renderLogs(logHeight - logPanelHeightReserve))
 
 	footer := subtleStyle.Render("? help")
 	if m.showHelp {
