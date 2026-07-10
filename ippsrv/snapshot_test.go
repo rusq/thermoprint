@@ -110,3 +110,28 @@ func TestServerSnapshotConcurrentWithListenAndServe(t *testing.T) {
 		t.Fatalf("ListenAndServe: %v", err)
 	}
 }
+
+func TestShutdownLimitsBonjourWait(t *testing.T) {
+	printer := mustWrapDriver(t, testDriver{}, "test-printer", "Test Printer")
+	server, err := New(printer)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	cancelled := make(chan struct{})
+	server.bonjour.cancel = func() { close(cancelled) }
+	server.bonjour.done = make(chan struct{}) // Simulate an unresponsive responder.
+
+	started := time.Now()
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Shutdown waited %s for Bonjour responder", elapsed)
+	}
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("Shutdown did not cancel Bonjour responder")
+	}
+}

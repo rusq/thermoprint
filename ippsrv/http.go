@@ -22,6 +22,8 @@ import (
 
 var MaxDocumentSize int64 = 104857600
 
+const bonjourShutdownGrace = 250 * time.Millisecond
+
 type Server struct {
 	mu         sync.RWMutex
 	listenAddr string
@@ -266,9 +268,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	// withdraw the advertisement first, so that goodbye packets are sent
-	// while the process is still alive.
-	s.stopBonjour(sctx)
+	// Give mDNS a brief chance to send goodbye packets, but do not let a
+	// responder that fails to stop delay the HTTP server shutdown.
+	bonjourCtx, stopBonjour := context.WithTimeout(sctx, bonjourShutdownGrace)
+	s.stopBonjour(bonjourCtx)
+	stopBonjour()
 
 	var errs error
 	for _, fn := range []func(ctx context.Context) error{
