@@ -23,15 +23,22 @@ type ctxDoneMsg struct{}
 type serverErrMsg struct{ err error }
 
 const (
+	dashboardClockFormat = "02-Jan-2006 15:04:05"
+	truncationMarker     = ">>"
+
 	minDashboardWidth = 40
 	minTopPanelWidth  = 38
 	minLogPanelHeight = 8
+	minHeaderGap      = 1
 
 	topPanelGap              = "  "
 	topPanelGapWidth         = 2
 	topPanelWidthReserve     = 4
 	logPanelWidthReserve     = 2
 	logPanelHeightReserve    = 2
+	logHeadingHeight         = 1
+	minLogLineWidth          = 20
+	logLineWidthReserve      = 6
 	dashboardHeightReserve   = 4
 	twoColumnWidthAdjustment = topPanelGapWidth
 )
@@ -145,10 +152,13 @@ func (m dashboardModel) View() string {
 		return "starting dashboard..."
 	}
 	contentWidth := max(minDashboardWidth, m.width)
-	header := titleStyle.Render("Thermoprint IPP Server") + " " + subtleStyle.Render("dashboard")
+	headerLeft := titleStyle.Render("Thermoprint IPP Server") + " " + subtleStyle.Render("dashboard")
 	if m.err != nil {
-		header += " " + errorStyle.Render(m.err.Error())
+		headerLeft += " " + errorStyle.Render(m.err.Error())
 	}
+	headerClock := subtleStyle.Render(time.Now().Format(dashboardClockFormat))
+	headerGap := max(minHeaderGap, contentWidth-lipgloss.Width(headerLeft)-lipgloss.Width(headerClock))
+	header := headerLeft + strings.Repeat(" ", headerGap) + headerClock
 
 	leftWidth := max(minTopPanelWidth, contentWidth/2-twoColumnWidthAdjustment)
 	rightWidth := max(minTopPanelWidth, contentWidth-leftWidth-(topPanelWidthReserve+topPanelGapWidth))
@@ -226,7 +236,7 @@ func (m dashboardModel) renderLogs(height int) string {
 		lines = append(lines, subtleStyle.Render("No log records"))
 		return strings.Join(lines, "\n")
 	}
-	visible := max(1, height-1)
+	visible := max(1, height-logHeadingHeight)
 	maxOffset := max(0, len(entries)-visible)
 	offset := min(m.logOffset, maxOffset)
 	end := len(entries) - offset
@@ -234,9 +244,10 @@ func (m dashboardModel) renderLogs(height int) string {
 	for _, entry := range entries[start:end] {
 		line := fmt.Sprintf("%s %-5s %s", entry.Time.Format("15:04:05"), entry.Level, entry.Message)
 		if entry.Attrs != "" {
-			line += " " + subtleStyle.Render(entry.Attrs)
+			line += " " + entry.Attrs
 		}
-		lines = append(lines, styleLog(entry.Level).Render(truncate(line, max(20, m.width-6))))
+		line = truncateDisplay(line, max(minLogLineWidth, m.width-logLineWidthReserve))
+		lines = append(lines, styleLog(entry.Level).Render(line))
 	}
 	if offset > 0 {
 		lines = append(lines, subtleStyle.Render(fmt.Sprintf("%d newer log entries below", offset)))
@@ -384,5 +395,28 @@ func truncate(s string, n int) string {
 	if n <= 1 {
 		return s[:n]
 	}
-	return s[:n-1] + "."
+	return s[:n-1] + ">>"
+}
+
+func truncateDisplay(s string, width int) string {
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	if width <= len(truncationMarker) {
+		return truncationMarker[:width]
+	}
+
+	var b strings.Builder
+	limit := width - len(truncationMarker)
+	used := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if used+rw > limit {
+			break
+		}
+		b.WriteRune(r)
+		used += rw
+	}
+	b.WriteString(truncationMarker)
+	return b.String()
 }

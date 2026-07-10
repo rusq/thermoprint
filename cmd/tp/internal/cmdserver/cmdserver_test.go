@@ -2,7 +2,10 @@ package cmdserver
 
 import (
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -59,6 +62,28 @@ func TestLogBufferBoundedCopy(t *testing.T) {
 	entries[0].Message = "mutated"
 	if got := buf.Entries()[0].Message; got != "two" {
 		t.Fatalf("buffer exposed mutable entries: got %q", got)
+	}
+}
+
+func TestRenderLogsTruncatesByDisplayWidth(t *testing.T) {
+	logs := newLogBuffer(10)
+	logs.append(logEntry{
+		Time:    time.Date(2026, 7, 10, 12, 34, 56, 0, time.UTC),
+		Level:   slog.LevelInfo,
+		Message: "started",
+		Attrs:   "job_id=42",
+	})
+	m := dashboardModel{
+		width: 39, // visible line fits in width-logLineWidthReserve.
+		logs:  logs,
+	}
+
+	got := m.renderLogs(2)
+	if !strings.Contains(got, "job_id=42") {
+		t.Fatalf("renderLogs() missing attrs:\n%s", got)
+	}
+	if strings.Contains(got, truncationMarker) {
+		t.Fatalf("renderLogs() truncated a display-width-fitting log line:\n%s", got)
 	}
 }
 
