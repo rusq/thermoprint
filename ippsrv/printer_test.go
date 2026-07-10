@@ -20,6 +20,20 @@ type captureDriver struct {
 	img image.Image
 }
 
+func TestPrinterStateString(t *testing.T) {
+	tests := map[PrinterState]string{
+		PSIdle:       "Idle",
+		PSProcessing: "Processing",
+		PSStopped:    "Stopped",
+		99:           "PrinterState(99)",
+	}
+	for state, want := range tests {
+		if got := state.String(); got != want {
+			t.Errorf("PrinterState(%d).String() = %q, want %q", state, got, want)
+		}
+	}
+}
+
 func (d *captureDriver) SetOptions(opt ...thermoprint.Option) error { return nil }
 func (d *captureDriver) PrintImage(ctx context.Context, img image.Image) error {
 	d.mu.Lock()

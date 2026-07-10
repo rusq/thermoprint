@@ -12,6 +12,19 @@ func TestParseStatus(t *testing.T) {
 	}
 }
 
+func TestParseStatusRejectsTruncatedPacket(t *testing.T) {
+	for _, data := range [][]byte{
+		nil,
+		{0x5a},
+		{0x5a, 0x02},
+		{0x5a, 0x02, 87, 1, 2},
+	} {
+		if _, err := parseStatus(data); err == nil {
+			t.Fatalf("parseStatus(%x) succeeded for truncated packet", data)
+		}
+	}
+}
+
 func TestLXD02SnapshotStoresLastStatus(t *testing.T) {
 	p := &LXD02{}
 	p.connected.Store(true)

@@ -1,6 +1,7 @@
 package ippsrv
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -87,7 +88,12 @@ func TestServerSnapshotConcurrentWithListenAndServe(t *testing.T) {
 
 	deadline := time.After(2 * time.Second)
 	for {
+		var info bytes.Buffer
+		server.Info(&info)
 		if snap := server.Snapshot(); snap.ListenAddr != "" {
+			if !bytes.Contains(info.Bytes(), []byte("Server Address:")) {
+				t.Fatalf("Info() missing server address:\n%s", info.String())
+			}
 			break
 		}
 		select {
