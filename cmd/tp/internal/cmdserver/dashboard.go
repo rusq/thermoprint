@@ -242,12 +242,7 @@ func (m dashboardModel) renderLogs(height int) string {
 	end := len(entries) - offset
 	start := max(0, end-visible)
 	for _, entry := range entries[start:end] {
-		line := fmt.Sprintf("%s %-5s %s", entry.Time.Format("15:04:05"), entry.Level, entry.Message)
-		if entry.Attrs != "" {
-			line += " " + entry.Attrs
-		}
-		line = truncateDisplay(line, max(minLogLineWidth, m.width-logLineWidthReserve))
-		lines = append(lines, styleLog(entry.Level).Render(line))
+		lines = append(lines, renderLogLine(entry, max(minLogLineWidth, m.width-logLineWidthReserve)))
 	}
 	if offset > 0 {
 		lines = append(lines, subtleStyle.Render(fmt.Sprintf("%d newer log entries below", offset)))
@@ -374,6 +369,22 @@ func styleLog(level slog.Level) lipgloss.Style {
 	default:
 		return lipgloss.NewStyle()
 	}
+}
+
+func renderLogLine(entry logEntry, width int) string {
+	prefix := fmt.Sprintf("%s %-5s %s", entry.Time.Format("15:04:05"), entry.Level, entry.Message)
+	line := prefix
+	if entry.Attrs != "" {
+		line += " " + entry.Attrs
+	}
+	line = truncateDisplay(line, width)
+	if entry.Attrs == "" || len(line) <= len(prefix) {
+		return styleLog(entry.Level).Render(line)
+	}
+
+	prefixPart := line[:len(prefix)]
+	attrPart := strings.TrimPrefix(line[len(prefix):], " ")
+	return styleLog(entry.Level).Render(prefixPart) + " " + subtleStyle.Render(attrPart)
 }
 
 func formatDuration(d time.Duration) string {

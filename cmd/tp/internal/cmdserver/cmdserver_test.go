@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func TestModeAllowsTUI(t *testing.T) {
@@ -84,6 +86,24 @@ func TestRenderLogsTruncatesByDisplayWidth(t *testing.T) {
 	}
 	if strings.Contains(got, truncationMarker) {
 		t.Fatalf("renderLogs() truncated a display-width-fitting log line:\n%s", got)
+	}
+}
+
+func TestRenderLogLineShadesAttrs(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	line := renderLogLine(logEntry{
+		Time:    time.Date(2026, 7, 10, 12, 34, 56, 0, time.UTC),
+		Level:   slog.LevelInfo,
+		Message: "started",
+		Attrs:   "job_id=42",
+	}, 80)
+
+	if !strings.Contains(line, "job_id=42") {
+		t.Fatalf("renderLogLine() missing attrs: %q", line)
+	}
+	if !strings.Contains(line, "\x1b[") {
+		t.Fatalf("renderLogLine() attrs are not styled: %q", line)
 	}
 }
 
