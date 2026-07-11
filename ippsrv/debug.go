@@ -26,7 +26,11 @@ func (s *Server) DebugServer(ctx context.Context, addr string) error {
 		if err != nil {
 			return err
 		}
-		go serve(conn)
+		go func() {
+			if err := serve(conn); err != nil {
+				slog.Error("debug server connection", "err", err)
+			}
+		}()
 	}
 }
 

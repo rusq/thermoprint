@@ -27,7 +27,9 @@ func buildURFStream(t *testing.T, pages ...urfPage) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	buf.WriteString(urfMagic)
-	binary.Write(&buf, binary.BigEndian, uint32(len(pages)))
+	if err := binary.Write(&buf, binary.BigEndian, uint32(len(pages))); err != nil {
+		t.Fatalf("write URF page count: %v", err)
+	}
 	for _, p := range pages {
 		buf.Write(p.hdr)
 		groupSize := 1

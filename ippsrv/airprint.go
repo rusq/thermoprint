@@ -78,7 +78,6 @@ func newSubtypeResponder(subtype, parentType string, names []string) (*subtypeRe
 		_ = r.pc6.SetMulticastHopLimit(255)
 	}
 	for _, iface := range multicastInterfaces() {
-		iface := iface
 		if err := r.pc4.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroup4.IP}); err != nil {
 			slog.Debug("mDNS IPv4 join failed", "interface", iface.Name, "error", err)
 		}
@@ -131,7 +130,7 @@ func (r *subtypeResponder) respond(ctx context.Context) {
 	}
 
 	// unsolicited announcements (RFC 6762 §8.3)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		r.multicast(r.records(subtypeTTL))
 		select {
 		case <-time.After(time.Second):

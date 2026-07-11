@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/OpenPrinting/goipp"
@@ -21,7 +22,12 @@ import (
 
 var MaxDocumentSize int64 = 104857600
 
+const bonjourShutdownGrace = 250 * time.Millisecond
+
 type Server struct {
+	mu         sync.RWMutex
+	listenAddr string
+
 	pp  []Printer       // List of printers managed by the server
 	srv *http.Server    // HTTP server instance
 	is  *basicIPPServer // IPP server instance
@@ -38,10 +44,6 @@ type Server struct {
 
 // https://datatracker.ietf.org/doc/html/rfc8011
 const (
-	hdrURIAuthenticationSupported = "uri-authentication-supported"
-	hdrURISecuritySupported       = "uri-security-supported"
-	hdrPrinterURISupported        = "printer-uri-supported"
-
 	hdrContentType = "Content-Type"
 	ippMIMEType    = "application/ipp"
 )
@@ -119,7 +121,7 @@ func (s *Server) Info(w io.Writer) {
 	for name := range s.is.Printer {
 		fmt.Fprintf(w, "  - %s\n", name)
 	}
-	fmt.Fprintf(w, "Server Address: %s\n", s.srv.Addr)
+	fmt.Fprintf(w, "Server Address: %s\n", s.listenAddrValue())
 	fmt.Fprintf(w, "Debug Mode: %t\n", s.debug)
 	fmt.Fprintf(w, "Max Document Size: %d bytes\n", MaxDocumentSize)
 
@@ -232,13 +234,27 @@ func (s *Server) ListenAndServe(addr string) error {
 	if err != nil {
 		return err
 	}
-	s.srv.Addr = addr
+	s.setListenAddr(addr)
 	if s.bonjour.enabled {
 		if err := s.startBonjour(l.Addr().(*net.TCPAddr)); err != nil {
 			slog.Warn("bonjour advertisement disabled", "error", err)
 		}
 	}
 	return s.srv.Serve(l)
+}
+
+func (s *Server) setListenAddr(addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.listenAddr = addr
+}
+
+func (s *Server) listenAddrValue() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.listenAddr
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -248,9 +264,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	// withdraw the advertisement first, so that goodbye packets are sent
-	// while the process is still alive.
-	s.stopBonjour(sctx)
+	// Give mDNS a brief chance to send goodbye packets, but do not let a
+	// responder that fails to stop delay the HTTP server shutdown.
+	bonjourCtx, stopBonjour := context.WithTimeout(sctx, bonjourShutdownGrace)
+	s.stopBonjour(bonjourCtx)
+	stopBonjour()
 
 	var errs error
 	for _, fn := range []func(ctx context.Context) error{

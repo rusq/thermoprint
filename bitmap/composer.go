@@ -129,8 +129,6 @@ func (c *Composer) Bounds() image.Rectangle {
 	return c.dst.Bounds()
 }
 
-type documentCommand string
-
 const (
 	dcImage  = ".image"
 	dcImageS = ".im"
@@ -186,12 +184,15 @@ func (d *Document) WriteString(s string) (n int, err error) {
 }
 
 // flush flushes text onto composer.
-func (d *Document) flush() {
+func (d *Document) flush() error {
 	if d.buf.Len() == 0 {
-		return
+		return nil
 	}
-	d.c.AppendText(d.font, d.buf.String())
+	if err := d.c.AppendText(d.font, d.buf.String()); err != nil {
+		return fmt.Errorf("append text: %w", err)
+	}
 	d.buf.Reset()
+	return nil
 }
 
 // Parse reads the script from reader and processes commands.
@@ -215,13 +216,17 @@ func (d *Document) Parse(r io.Reader) error {
 	if err := s.Err(); err != nil {
 		return err
 	}
-	d.flush() // flush any remaining text in the buffer
+	if err := d.flush(); err != nil {
+		return fmt.Errorf("flush document: %w", err)
+	}
 	return nil
 }
 
 func (d *Document) parseCommand(text string) error {
 	// process command
-	d.flush()
+	if err := d.flush(); err != nil {
+		return err
+	}
 	parts := strings.Split(text, " ")
 	fn, ok := commands[parts[0]]
 	if !ok {
@@ -239,23 +244,25 @@ func (d *Document) cmdAlign(args ...string) error {
 	}
 	switch args[0] {
 	case "left", "l":
-		d.align(alignLeft)
+		return d.align(alignLeft)
 	case "right", "r":
-		d.align(alignRight)
+		return d.align(alignRight)
 	case "center", "c":
-		d.align(alignCenter)
+		return d.align(alignCenter)
 	default:
 		return fmt.Errorf("unknown alignment %q", args[0])
 	}
-	return nil
 }
 
-func (d *Document) align(a textAlign) {
+func (d *Document) align(a textAlign) error {
 	if d.alignment == a {
-		return // already aligned
+		return nil // already aligned
 	}
-	d.flush()
+	if err := d.flush(); err != nil {
+		return err
+	}
 	d.alignment = a
+	return nil
 }
 
 func (d *Document) cmdImage(args ...string) error {
@@ -273,12 +280,12 @@ func (d *Document) cmdImage(args ...string) error {
 	if err != nil {
 		return err
 	}
-	d.flush()
+	if err := d.flush(); err != nil {
+		return err
+	}
 	d.c.AppendImage(img)
 	return nil
 }
-
-const argSep = " "
 
 func (d *Document) cmdFont(args ...string) error {
 	if argc := len(args); argc < 1 || 2 < argc {
@@ -319,7 +326,18 @@ func (d *Document) cmdFont(args ...string) error {
 }
 
 // Image returns the document image.
+//
+// For compatibility, errors encountered while flushing buffered text are not
+// returned. Call [Document.Render] when the error must be handled.
 func (d *Document) Image() image.Image {
-	d.flush()
+	_ = d.flush()
 	return d.c.Image()
+}
+
+// Render flushes buffered text and returns the document image.
+func (d *Document) Render() (image.Image, error) {
+	if err := d.flush(); err != nil {
+		return nil, err
+	}
+	return d.c.Image(), nil
 }

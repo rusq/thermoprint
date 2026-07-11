@@ -28,11 +28,6 @@ type IPPHandler interface {
 	ServeIPP(ctx context.Context, req *goipp.Message, body []byte) (resp *goipp.Message, err error)
 }
 
-type IPPRequest struct {
-	msg *goipp.Message
-	p   Printer
-}
-
 type IPPHandlerFunc func(ctx context.Context, req *goipp.Message, body []byte) (resp *goipp.Message, err error)
 
 func (f IPPHandlerFunc) ServeIPP(ctx context.Context, req *goipp.Message, body []byte) (resp *goipp.Message, err error) {

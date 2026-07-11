@@ -74,7 +74,7 @@ func TestDecodePWG_Black1(t *testing.T) {
 		t.Fatalf("bounds %v", got)
 	}
 	// K polarity: bit 1 = black (gray 0)
-	for x := 0; x < 8; x++ {
+	for x := range 8 {
 		if img.GrayAt(x, 0).Y != 0 {
 			t.Errorf("pixel (%d,0): got %d, want black (0)", x, img.GrayAt(x, 0).Y)
 		}
