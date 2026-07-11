@@ -155,7 +155,6 @@ const (
 	PSStopped
 )
 
-
 func (p *basePrinter) State() PrinterState {
 	p.stateMu.RLock()
 	defer p.stateMu.RUnlock()
