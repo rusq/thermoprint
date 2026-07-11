@@ -14,3 +14,4 @@ __debug*
 protodump/*
 spool/*
 trace.out
+*.pf

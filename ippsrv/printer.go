@@ -148,24 +148,13 @@ func (p *basePrinter) Info() string {
 
 type PrinterState uint16
 
+//go:generate go tool stringer -trimprefix PS -type PrinterState
 const (
 	PSIdle PrinterState = iota + 3 // 3 is the value for idle in RFC 2911
 	PSProcessing
 	PSStopped
 )
 
-func (s PrinterState) String() string {
-	switch s {
-	case PSIdle:
-		return "Idle"
-	case PSProcessing:
-		return "Processing"
-	case PSStopped:
-		return "Stopped"
-	default:
-		return fmt.Sprintf("PrinterState(%d)", s)
-	}
-}
 
 func (p *basePrinter) State() PrinterState {
 	p.stateMu.RLock()
