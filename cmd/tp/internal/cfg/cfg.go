@@ -71,6 +71,7 @@ func SetDebugLevel() {
 
 // SetBaseFlags sets base flags.
 func SetBaseFlags(fs *flag.FlagSet, mask FlagMask) {
+	setDevFlags(fs, mask)
 	fs.StringVar(&TraceFile, "trace", TraceFile, "trace `filename`")
 	fs.StringVar(&LogFile, "log", LogFile, "log `file`, if not specified, messages are printed to STDERR")
 	fs.BoolVar(&JSONHandler, "log-json", JSONHandler, "log in JSON format")

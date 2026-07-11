@@ -21,7 +21,6 @@ import (
 	"github.com/rusq/thermoprint/cmd/tp/internal/golang/help"
 )
 
-
 func init() {
 	base.ThermoprintCommand.Commands = []*base.Command{
 		// Add commands here.
@@ -111,10 +110,9 @@ func invoke(cmd *base.Command, args []string) error {
 	}
 
 	// maybe start trace
-	if err := initTrace(cfg.TraceFile); err != nil {
-		base.SetExitStatus(base.SGenericError)
-		return fmt.Errorf("failed to start trace: %s", err)
-	}
+	stop := initTrace(cfg.TraceFile)
+	base.AtExit(stop)
+	initDebug()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -147,33 +145,36 @@ func parseFlags(cmd *base.Command, args []string) ([]string, error) {
 
 // initTrace initialises the tracing.  If the filename is not empty, the file
 // will be opened, trace will write to that file.  Returns the stop function
-// that must be called in the deferred call.  If the error is returned the stop
-// function is nil.
-func initTrace(filename string) error {
+// that must be called in the deferred call.  If there were errors during
+// initialisation stop function is noop.
+func initTrace(filename string) (stop func()) {
+	stop = func() {}
 	if filename == "" {
-		return nil
+		return
 	}
 
-	slog.Debug("trace will be written to", "filename", filename)
+	lg := slog.With("filename", filename)
+
+	lg.Info("trace will be written to", "filename", filename)
 
 	f, err := os.Create(filename)
 	if err != nil {
-		return err
+		lg.Warn("failed to create the trace file, tracing is disabled", "err", err)
+		return
 	}
 	if err := trace.Start(f); err != nil {
 		f.Close()
-		slog.Warn("failed to start trace", "err", err)
-		return nil
+		lg.Warn("failed to start trace, tracing is disabled", "err", err)
+		return
 	}
 
-	stop := func() {
+	stop = func() {
 		trace.Stop()
 		if err := f.Close(); err != nil {
-			slog.Warn("failed to close trace file", "filename", filename, "error", err)
+			lg.Warn("failed to close trace file", "filename", filename, "error", err)
 		}
 	}
-	base.AtExit(stop)
-	return nil
+	return
 }
 
 // initLog initialises the logging and returns the context with the Logger. If the
@@ -223,4 +224,3 @@ func iftrue[T any](cond bool, t T, f T) T {
 	}
 	return f
 }
-
