@@ -78,6 +78,14 @@ func TestDocument_ParseImageCommandRequiresArgument(t *testing.T) {
 	}
 }
 
+func TestDocument_ImagePreservesCompatibleSignature(t *testing.T) {
+	doc := NewDocument(NewComposer(2), 203)
+
+	var imageFn func() image.Image = doc.Image
+
+	assert.NotNil(t, imageFn())
+}
+
 func TestComposer_appendImageDither(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 2, 2))
 	fillColor(src, src.Bounds(), color.White)

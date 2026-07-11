@@ -13,7 +13,6 @@ import (
 func TestRaster_Rasterise(t *testing.T) {
 	type args struct {
 		src        image.Image
-		gamma      float64
 		autoDither bool
 	}
 	tests := []struct {

@@ -44,10 +44,6 @@ type Server struct {
 
 // https://datatracker.ietf.org/doc/html/rfc8011
 const (
-	hdrURIAuthenticationSupported = "uri-authentication-supported"
-	hdrURISecuritySupported       = "uri-security-supported"
-	hdrPrinterURISupported        = "printer-uri-supported"
-
 	hdrContentType = "Content-Type"
 	ippMIMEType    = "application/ipp"
 )

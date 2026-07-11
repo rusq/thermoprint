@@ -29,16 +29,12 @@ type spooler interface {
 
 type spool struct {
 	dir  string        // Directory where jobs are spooled
-	msgC chan spoolmsg // Channel for spool messages
+	msgC chan struct{} // Channel for spool messages
 
 	mu           sync.Mutex             // Mutex to protect concurrent access
 	jobs         map[JobID]*Job         // In-memory cache of jobs, keyed by JobID
 	printerJobs  map[string][]JobID     // Jobs per printer, keyed by printer ID
 	printerLocks map[string]*sync.Mutex // Job processing locks per printer, keyed by printer ID
-}
-
-type spoolmsg struct {
-	command int
 }
 
 func newSpool(spoolDir string) (*spool, error) {
@@ -60,7 +56,7 @@ func newSpool(spoolDir string) (*spool, error) {
 		jobs:         make(map[JobID]*Job),
 		printerJobs:  make(map[string][]JobID),
 		printerLocks: make(map[string]*sync.Mutex),
-		msgC:         make(chan spoolmsg, 100), // Buffered channel for spool messages
+		msgC:         make(chan struct{}, 100), // Buffered channel for spool messages
 	}
 	go sp.worker()
 	return sp, nil
@@ -85,12 +81,11 @@ func (s *spool) worker() {
 
 	for {
 		select {
-		case msg, more := <-s.msgC:
+		case _, more := <-s.msgC:
 			if !more {
 				slog.Info("spool worker stopping, channel closed")
 				return
 			}
-			_ = msg // Process the message if needed
 		case <-ticker.C:
 			s.mu.Lock()
 			activeJobCount := 0

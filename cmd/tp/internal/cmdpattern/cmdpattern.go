@@ -36,7 +36,9 @@ func runPattern(ctx context.Context, cmd *base.Command, args []string) error {
 	}
 	if len(args) != 1 {
 		base.SetExitStatus(base.SInvalidParameters)
-		listPatterns(os.Stderr)
+		if err := listPatterns(os.Stderr); err != nil {
+			return fmt.Errorf("list patterns: %w", err)
+		}
 		return errors.New("expected pattern name")
 	}
 

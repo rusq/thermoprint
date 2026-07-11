@@ -66,7 +66,10 @@ func runCompose(ctx context.Context, cmd *base.Command, args []string) error {
 		base.SetExitStatus(base.SApplicationError)
 		return err
 	}
-	img := doc.Image()
+	img, err := doc.Render()
+	if err != nil {
+		return fmt.Errorf("render document: %w", err)
+	}
 
 	return prn.PrintImage(ctx, img)
 }
