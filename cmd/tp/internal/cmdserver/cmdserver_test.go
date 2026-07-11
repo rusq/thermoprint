@@ -10,6 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+
+	"github.com/rusq/thermoprint/ippsrv"
 )
 
 func TestModeAllowsTUI(t *testing.T) {
@@ -35,10 +37,30 @@ func TestModeAllowsTUI(t *testing.T) {
 	}
 }
 
-func TestDashboardModelLogScrollKeys(t *testing.T) {
-	m := dashboardModel{focusLogs: true, ctx: t.Context()}
+func TestDashboardModelFocusCycleAndScrollKeys(t *testing.T) {
+	m := dashboardModel{ctx: t.Context()}
+	m.serverSnap.Jobs = make([]ippsrv.JobSnapshot, 20)
+	for i := range m.serverSnap.Jobs {
+		m.serverSnap.Jobs[i].ID = ippsrv.JobID(i + 1)
+	}
+
+	for _, want := range []dashboardFocus{focusLogs, focusJobs, focusNone} {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(dashboardModel)
+		if m.focus != want {
+			t.Fatalf("focus after tab = %v, want %v", m.focus, want)
+		}
+	}
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(dashboardModel)
+	if m.logOffset != 0 || m.jobOffset != 0 {
+		t.Fatalf("scroll changed without focus: logs=%d jobs=%d", m.logOffset, m.jobOffset)
+	}
+
+	m.focus = focusLogs
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = next.(dashboardModel)
 	if m.logOffset != 1 {
 		t.Fatalf("logOffset after up = %d, want 1", m.logOffset)
@@ -48,6 +70,55 @@ func TestDashboardModelLogScrollKeys(t *testing.T) {
 	m = next.(dashboardModel)
 	if m.logOffset != 0 {
 		t.Fatalf("logOffset after down = %d, want 0", m.logOffset)
+	}
+	if m.jobOffset != 0 {
+		t.Fatalf("jobOffset changed while logs focused: %d", m.jobOffset)
+	}
+
+	m.focus = focusJobs
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m = next.(dashboardModel)
+	if m.jobOffset != scrollPageSize {
+		t.Fatalf("jobOffset after pgup = %d, want %d", m.jobOffset, scrollPageSize)
+	}
+	m.jobOffset = m.maxJobOffset(t.Context())
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(dashboardModel)
+	if want := m.maxJobOffset(t.Context()); m.jobOffset != want {
+		t.Fatalf("jobOffset after up at oldest = %d, want %d", m.jobOffset, want)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = next.(dashboardModel)
+	if m.jobOffset != 0 {
+		t.Fatalf("jobOffset after end = %d, want 0", m.jobOffset)
+	}
+}
+
+func TestRenderJobsLimitsRecordsAndScrolls(t *testing.T) {
+	m := dashboardModel{
+		ctx: t.Context(),
+		serverSnap: ippsrv.ServerSnapshot{Jobs: []ippsrv.JobSnapshot{
+			{ID: 1, Name: "one"},
+			{ID: 2, Name: "two"},
+			{ID: 3, Name: "three"},
+		}},
+	}
+
+	got := m.renderJobs(t.Context(), 6)
+	if strings.Contains(got, "1    ") || !strings.Contains(got, "2    ") || !strings.Contains(got, "3    ") {
+		t.Fatalf("renderJobs() did not show the newest two jobs:\n%s", got)
+	}
+	if gotLines := strings.Count(got, "\n") + 1; gotLines > 6 {
+		t.Fatalf("renderJobs() rendered %d lines, want at most 6:\n%s", gotLines, got)
+	}
+
+	m.jobOffset = 10
+	got = m.renderJobs(t.Context(), 6)
+	if !strings.Contains(got, "1    ") || strings.Contains(got, "3    ") {
+		t.Fatalf("renderJobs() did not clamp to the oldest job:\n%s", got)
+	}
+	if !strings.Contains(got, "newer below") {
+		t.Fatalf("renderJobs() missing newer-jobs indicator:\n%s", got)
 	}
 }
 

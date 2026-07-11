@@ -42,6 +42,17 @@ const (
 	logLineWidthReserve      = 6
 	dashboardHeightReserve   = 4
 	twoColumnWidthAdjustment = topPanelGapWidth
+	jobHeadingHeight         = 2
+	jobRecordHeight          = 2
+	scrollPageSize           = 10
+)
+
+type dashboardFocus uint8
+
+const (
+	focusNone dashboardFocus = iota
+	focusLogs
+	focusJobs
 )
 
 type dashboardModel struct {
@@ -53,8 +64,9 @@ type dashboardModel struct {
 
 	width     int
 	height    int
-	focusLogs bool
+	focus     dashboardFocus
 	logOffset int
+	jobOffset int
 	showHelp  bool
 
 	serverSnap  ippsrv.ServerSnapshot
@@ -117,27 +129,44 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		case "tab":
-			m.focusLogs = !m.focusLogs
+			m.focus = (m.focus + 1) % 3
 		case "?":
 			m.showHelp = !m.showHelp
 		case "up", "k":
-			if m.focusLogs {
+			switch m.focus {
+			case focusLogs:
 				m.logOffset++
+			case focusJobs:
+				m.jobOffset = min(m.jobOffset+1, m.maxJobOffset(ctx))
 			}
 		case "down", "j":
-			if m.focusLogs && m.logOffset > 0 {
-				m.logOffset--
+			switch m.focus {
+			case focusLogs:
+				m.logOffset = max(0, m.logOffset-1)
+			case focusJobs:
+				m.jobOffset = max(0, m.jobOffset-1)
 			}
 		case "pgup":
-			if m.focusLogs {
-				m.logOffset += 10
+			switch m.focus {
+			case focusLogs:
+				m.logOffset += scrollPageSize
+			case focusJobs:
+				m.jobOffset = min(m.jobOffset+scrollPageSize, m.maxJobOffset(ctx))
 			}
 		case "pgdown":
-			if m.focusLogs {
-				m.logOffset -= min(m.logOffset, 10)
+			switch m.focus {
+			case focusLogs:
+				m.logOffset = max(0, m.logOffset-scrollPageSize)
+			case focusJobs:
+				m.jobOffset = max(0, m.jobOffset-scrollPageSize)
 			}
 		case "end":
-			m.logOffset = 0
+			switch m.focus {
+			case focusLogs:
+				m.logOffset = 0
+			case focusJobs:
+				m.jobOffset = 0
+			}
 		}
 	case tickMsg:
 		m.refresh(ctx)
@@ -169,19 +198,25 @@ func (m dashboardModel) View() string {
 	leftWidth := max(minTopPanelWidth, contentWidth/2-twoColumnWidthAdjustment)
 	rightWidth := max(minTopPanelWidth, contentWidth-leftWidth-(topPanelWidthReserve+topPanelGapWidth))
 	statePanel := panelStyle.Width(leftWidth).Render(m.renderState(ctx))
-	jobsPanel := panelStyle.Width(rightWidth).Render(m.renderJobs(ctx))
+	jobsPanelHeight := lipgloss.Height(statePanel)
+	jobsPanelStyle := panelStyle
+	if m.focus == focusJobs {
+		jobsPanelStyle = focusStyle
+	}
+	jobsContentHeight := jobsPanelHeight - logPanelHeightReserve
+	jobsPanel := jobsPanelStyle.Width(rightWidth).Height(jobsContentHeight).Render(m.renderJobs(ctx, jobsContentHeight))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, statePanel, topPanelGap, jobsPanel)
 
 	logHeight := max(minLogPanelHeight, m.height-lipgloss.Height(header)-lipgloss.Height(body)-dashboardHeightReserve)
 	logPanelStyle := panelStyle
-	if m.focusLogs {
+	if m.focus == focusLogs {
 		logPanelStyle = focusStyle
 	}
 	logPanel := logPanelStyle.Width(contentWidth - logPanelWidthReserve).Height(logHeight).Render(m.renderLogs(logHeight - logPanelHeightReserve))
 
 	footer := subtleStyle.Render("? help")
 	if m.showHelp {
-		footer = subtleStyle.Render("q quit  tab focus logs  up/down/pgup/pgdown scroll  ? hide help")
+		footer = subtleStyle.Render("q quit  tab focus logs/jobs  up/down/pgup/pgdown scroll  ? hide help")
 	}
 	return strings.TrimRight(lipgloss.JoinVertical(lipgloss.Left, header, body, logPanel, footer), "\n")
 }
@@ -221,17 +256,24 @@ func (m dashboardModel) renderState(ctx context.Context) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m dashboardModel) renderJobs(ctx context.Context) string {
+func (m dashboardModel) renderJobs(ctx context.Context, height int) string {
 	rgn := trace.StartRegion(ctx, "renderJobs")
 	defer rgn.End()
 
-	lines := []string{headingStyle.Render("Jobs")}
 	if len(m.serverSnap.Jobs) == 0 {
-		lines = append(lines, subtleStyle.Render("No jobs"))
-		return strings.Join(lines, "\n")
+		return strings.Join([]string{headingStyle.Render("Jobs"), subtleStyle.Render("No jobs")}, "\n")
 	}
-	lines = append(lines, fmt.Sprintf("%-4s %-11s %-18s %-10s", "ID", "State", "Name", "User"))
-	for _, job := range m.serverSnap.Jobs {
+	visible := jobVisibleCount(height)
+	maxOffset := max(0, len(m.serverSnap.Jobs)-visible)
+	offset := min(m.jobOffset, maxOffset)
+	heading := "Jobs"
+	if offset > 0 {
+		heading = fmt.Sprintf("Jobs (%d newer below)", offset)
+	}
+	lines := []string{headingStyle.Render(heading), fmt.Sprintf("%-4s %-11s %-18s %-10s", "ID", "State", "Name", "User")}
+	end := len(m.serverSnap.Jobs) - offset
+	start := max(0, end-visible)
+	for _, job := range m.serverSnap.Jobs[start:end] {
 		name := truncate(valueOr(job.Name, "-"), 18)
 		user := truncate(valueOr(job.Username, "-"), 10)
 		lines = append(lines, fmt.Sprintf("%-4d %-11s %-18s %-10s", job.ID, job.State, name, user))
@@ -242,6 +284,18 @@ func (m dashboardModel) renderJobs(ctx context.Context) string {
 		)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m dashboardModel) maxJobOffset(ctx context.Context) int {
+	contentWidth := max(minDashboardWidth, m.width)
+	leftWidth := max(minTopPanelWidth, contentWidth/2-twoColumnWidthAdjustment)
+	statePanel := panelStyle.Width(leftWidth).Render(m.renderState(ctx))
+	visible := jobVisibleCount(lipgloss.Height(statePanel) - logPanelHeightReserve)
+	return max(0, len(m.serverSnap.Jobs)-visible)
+}
+
+func jobVisibleCount(height int) int {
+	return max(0, (height-jobHeadingHeight)/jobRecordHeight)
 }
 
 func (m dashboardModel) renderLogs(height int) string {
