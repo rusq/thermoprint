@@ -159,8 +159,8 @@ func (s strictImage) At(x, y int) color.Color {
 func makeCheckers(t *testing.T, width, height int) image.Image {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			if (x+y)%2 == 0 {
 				img.Set(x, y, image.White)
 			} else {

@@ -36,7 +36,7 @@ func TestModeAllowsTUI(t *testing.T) {
 }
 
 func TestDashboardModelLogScrollKeys(t *testing.T) {
-	m := dashboardModel{focusLogs: true}
+	m := dashboardModel{focusLogs: true, ctx: t.Context()}
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = next.(dashboardModel)

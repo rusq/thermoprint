@@ -58,7 +58,7 @@ type logWriter struct {
 }
 
 func (w logWriter) Write(p []byte) (int, error) {
-	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(string(p), "\n"), "\n") {
 		if line != "" {
 			w.buffer.append(logEntry{Time: time.Now(), Level: slog.LevelInfo, Message: line})
 		}

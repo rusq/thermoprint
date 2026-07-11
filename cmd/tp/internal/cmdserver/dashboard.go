@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/trace"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func newDashboardModel(ctx context.Context, server *ippsrv.Server, physical phys
 		result:   result,
 		showHelp: true,
 	}
-	m.refresh()
+	m.refresh(ctx)
 	return m
 }
 
@@ -104,6 +105,9 @@ func (m dashboardModel) Init() tea.Cmd {
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	ctx, task := trace.NewTask(m.ctx, "dashboard.update")
+	defer task.End()
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -136,7 +140,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logOffset = 0
 		}
 	case tickMsg:
-		m.refresh()
+		m.refresh(ctx)
 		return m, tick()
 	case ctxDoneMsg:
 		return m, tea.Quit
@@ -148,6 +152,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardModel) View() string {
+	ctx, task := trace.NewTask(m.ctx, "dashboard.view")
+	defer task.End()
 	if m.width == 0 {
 		return "starting dashboard..."
 	}
@@ -162,8 +168,8 @@ func (m dashboardModel) View() string {
 
 	leftWidth := max(minTopPanelWidth, contentWidth/2-twoColumnWidthAdjustment)
 	rightWidth := max(minTopPanelWidth, contentWidth-leftWidth-(topPanelWidthReserve+topPanelGapWidth))
-	statePanel := panelStyle.Width(leftWidth).Render(m.renderState())
-	jobsPanel := panelStyle.Width(rightWidth).Render(m.renderJobs())
+	statePanel := panelStyle.Width(leftWidth).Render(m.renderState(ctx))
+	jobsPanel := panelStyle.Width(rightWidth).Render(m.renderJobs(ctx))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, statePanel, topPanelGap, jobsPanel)
 
 	logHeight := max(minLogPanelHeight, m.height-lipgloss.Height(header)-lipgloss.Height(body)-dashboardHeightReserve)
@@ -180,14 +186,20 @@ func (m dashboardModel) View() string {
 	return strings.TrimRight(lipgloss.JoinVertical(lipgloss.Left, header, body, logPanel, footer), "\n")
 }
 
-func (m *dashboardModel) refresh() {
+func (m *dashboardModel) refresh(ctx context.Context) {
+	rgn := trace.StartRegion(ctx, "refresh")
+	defer rgn.End()
+
 	m.serverSnap = m.server.Snapshot()
 	if m.physical != nil {
 		m.printerSnap = m.physical.Snapshot()
 	}
 }
 
-func (m dashboardModel) renderState() string {
+func (m dashboardModel) renderState(ctx context.Context) string {
+	rgn := trace.StartRegion(ctx, "renderState")
+	defer rgn.End()
+
 	ss := m.serverSnap
 	ps := m.printerSnap
 	lines := []string{
@@ -209,7 +221,10 @@ func (m dashboardModel) renderState() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m dashboardModel) renderJobs() string {
+func (m dashboardModel) renderJobs(ctx context.Context) string {
+	rgn := trace.StartRegion(ctx, "renderJobs")
+	defer rgn.End()
+
 	lines := []string{headingStyle.Render("Jobs")}
 	if len(m.serverSnap.Jobs) == 0 {
 		lines = append(lines, subtleStyle.Render("No jobs"))

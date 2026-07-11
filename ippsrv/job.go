@@ -324,7 +324,7 @@ func (j *Job) setState(state JobState, args []any, fallback ...JobStateReason) {
 	}
 }
 
-func reasonsFromArgs(args ...interface{}) []JobStateReason {
+func reasonsFromArgs(args ...any) []JobStateReason {
 	reasons := make([]JobStateReason, 0, len(args))
 	for _, arg := range args {
 		if reason, ok := arg.(JobStateReason); ok {
@@ -356,10 +356,7 @@ func (j *Job) attributes() goipp.Attributes {
 			a("date-time-at-"+event, goipp.TagNoValue, goipp.Void{})
 			return
 		}
-		secs := upTime - int(now.Sub(t).Seconds())
-		if secs < 0 {
-			secs = 0
-		}
+		secs := max(upTime-int(now.Sub(t).Seconds()), 0)
 		a("time-at-"+event, goipp.TagInteger, goipp.Integer(secs))
 		a("date-time-at-"+event, goipp.TagDateTime, goipp.Time{Time: t})
 	}

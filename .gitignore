@@ -13,3 +13,4 @@ __debug*
 *.bin
 protodump/*
 spool/*
+trace.out

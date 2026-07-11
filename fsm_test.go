@@ -630,8 +630,7 @@ func TestFSM(t *testing.T) {
 			t.Fatalf("first print error = %v, want context.Canceled", err)
 		}
 
-		ctxB, cancelB := context.WithCancel(context.Background())
-		defer cancelB()
+		ctxB := t.Context()
 		errB := make(chan error, 1)
 		go func() {
 			errB <- p.printPackets(ctxB, p.buffer)
@@ -719,8 +718,7 @@ func TestFSM(t *testing.T) {
 			t.Fatalf("first print error = %v, want context.Canceled", err)
 		}
 
-		ctxB, cancelB := context.WithCancel(context.Background())
-		defer cancelB()
+		ctxB := t.Context()
 		errB := make(chan error, 1)
 		go func() {
 			errB <- p.printPackets(ctxB, p.buffer)
@@ -779,8 +777,7 @@ func TestNotificationWorker(t *testing.T) {
 			p := newFSMTestPrinter(1)
 			job := activeTestJob(t, p)
 			notifyCh := make(chan lxd02notification, 1)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 			go p.worker(ctx, notifyCh)
 
 			notifyCh <- tc.ntf
@@ -797,8 +794,7 @@ func TestNotificationWorker(t *testing.T) {
 		p.activeJob = nil
 		p.stateMu.Unlock()
 		notifyCh := make(chan lxd02notification)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		go p.worker(ctx, notifyCh)
 
 		for _, ntf := range []lxd02notification{

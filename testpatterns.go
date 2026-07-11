@@ -35,8 +35,8 @@ var TestBufferPatterns = map[string]func(int) [][]byte{
 func TestImgRunningLines(maxX int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, maxX, 16))
 	draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
-	for y := 0; y < 8; y++ {
-		for x := 0; x < maxX; x++ {
+	for y := range 8 {
+		for x := range maxX {
 			if (x+y)%2 == 0 {
 				img.Set(x, y*2, color.Black)
 				img.Set(x, y*2+1, color.Black)
@@ -77,7 +77,7 @@ func TestImgMillimetres(maxX int) image.Image {
 func TestImgSine(maxX int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, maxX, 64)) // 64 lines of 1 pixel each
 	draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
-	for x := 0; x < maxX; x++ {
+	for x := range maxX {
 		y := int(32 + 30*math.Sin(float64(x)*2*math.Pi/100)) // Sinusoidal wave with amplitude 30
 		if y >= 0 && y < img.Bounds().Dy() {
 			img.Set(x, y, color.Black)
@@ -91,7 +91,7 @@ func BufferBinaryPattern(width int) [][]byte {
 	// it we are expected to send one []byte slice per 2 lines. So, we divide by 4
 	width /= 4
 	var ret = make([][]byte, 256)
-	for i := 0; i < len(ret); i++ {
+	for i := range ret {
 		v := uint8(i)
 		ret[i] = bytes.Repeat([]byte{v}, width)
 	}

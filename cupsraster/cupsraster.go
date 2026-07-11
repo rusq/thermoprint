@@ -122,7 +122,7 @@ func decodeGrayPage(br *bufio.Reader, width, height, bpp, bytesPerLine int, blac
 		dst := img.Pix[y*img.Stride : y*img.Stride+width]
 		switch bpp {
 		case 1:
-			for x := 0; x < width; x++ {
+			for x := range width {
 				bit := row[x/8]>>(7-x%8)&1 == 1
 				if bit == blackOne {
 					dst[x] = 0x00 // black
@@ -149,7 +149,7 @@ func decodeGrayPage(br *bufio.Reader, width, height, bpp, bytesPerLine int, blac
 func decodeRGBPage(br *bufio.Reader, width, height, bytesPerLine int) (*image.NRGBA, error) {
 	img := image.NewNRGBA(image.Rect(0, 0, width, height))
 	err := decodeLines(br, height, bytesPerLine, 3, 0xff, func(y int, row []byte) {
-		for x := 0; x < width; x++ {
+		for x := range width {
 			img.SetNRGBA(x, y, color.NRGBA{R: row[x*3], G: row[x*3+1], B: row[x*3+2], A: 0xff})
 		}
 	})
