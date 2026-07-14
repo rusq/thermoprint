@@ -22,7 +22,7 @@ import (
 
 var MaxDocumentSize int64 = 104857600
 
-const bonjourShutdownGrace = 250 * time.Millisecond
+const bonjourShutdownGrace = 2 * time.Second
 
 type Server struct {
 	mu         sync.RWMutex
@@ -37,6 +37,7 @@ type Server struct {
 
 	bonjour struct {
 		enabled bool
+		grace   time.Duration // max wait for goodbye packets on shutdown
 		cancel  context.CancelFunc
 		done    chan struct{}
 	}
@@ -76,6 +77,7 @@ func New(p Printer, opts ...Option) (*Server, error) {
 	var s = &Server{
 		pp: []Printer{p},
 	}
+	s.bonjour.grace = bonjourShutdownGrace
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -261,14 +263,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.srv == nil {
 		return nil // nothing to shutdown
 	}
+	// Give mDNS a chance to send goodbye packets so that clients notice the
+	// printer going offline, but do not let a responder that fails to stop
+	// block shutdown forever.  The grace has its own budget, taken before the
+	// drain timeout below, so a slow responder does not eat into the time
+	// available for draining in-flight requests.
+	bonjourCtx, bjcancel := context.WithTimeout(ctx, s.bonjour.grace)
+	slog.Debug("stopping bonjour", "timeout", s.bonjour.grace.String())
+	s.stopBonjour(bonjourCtx)
+	bjcancel()
+
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-
-	// Give mDNS a brief chance to send goodbye packets, but do not let a
-	// responder that fails to stop delay the HTTP server shutdown.
-	bonjourCtx, stopBonjour := context.WithTimeout(sctx, bonjourShutdownGrace)
-	s.stopBonjour(bonjourCtx)
-	stopBonjour()
 
 	var errs error
 	for _, fn := range []func(ctx context.Context) error{
