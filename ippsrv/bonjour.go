@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"runtime/trace"
 	"strings"
 
 	"github.com/brutella/dnssd"
@@ -189,12 +190,16 @@ func (s *Server) startBonjour(ta *net.TCPAddr) error {
 // be sent, or ctx to expire.  It is a no-op if the advertisement never
 // started.
 func (s *Server) stopBonjour(ctx context.Context) {
+	ctx, task := trace.NewTask(ctx, "stopBonjour")
+	defer task.End()
 	if s.bonjour.cancel == nil {
 		return
 	}
 	s.bonjour.cancel()
 	select {
 	case <-s.bonjour.done:
+		slog.Debug("bonjour shut down")
 	case <-ctx.Done():
+		slog.Debug("bonjour context timeout")
 	}
 }

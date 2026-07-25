@@ -119,6 +119,7 @@ func TestShutdownLimitsBonjourWait(t *testing.T) {
 	}
 
 	cancelled := make(chan struct{})
+	server.bonjour.grace = 50 * time.Millisecond
 	server.bonjour.cancel = func() { close(cancelled) }
 	server.bonjour.done = make(chan struct{}) // Simulate an unresponsive responder.
 
