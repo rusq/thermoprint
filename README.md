@@ -38,6 +38,29 @@ You can print test patterns to check printer quality:
 thermoprint -pattern MillimeterLines
 ```
 
+To diagnose whether the printer drops either row of its first raw packet, run:
+
+```shell
+tp pattern FirstPacketRows
+```
+
+Both markers should have the same one-pixel step at the midpoint. Interpret the
+output as follows:
+
+- Two identical stepped markers: the first packet printed correctly.
+- A straight, full-width first marker followed by a stepped control marker: both
+  rows of the first packet were printed at the same paper position, indicating
+  that the initial paper advance slipped or stalled. This can happen when the
+  freshly torn leading edge catches or binds on the metal tear strip.
+- A missing left or right segment in the first marker: the upper or lower pixel
+  row was lost, respectively.
+- Only the control marker: the entire first packet was lost.
+
+If the first marker is flattened, try another print without tearing off the
+paper. A correctly stepped marker on the subsequent print further points to a
+mechanical leading-edge feed problem rather than packet loss or printer
+initialization.
+
 # Print server (AirPrint / IPP Everywhere)
 
 `tp server` starts an IPP print server for the connected printer and
