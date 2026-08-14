@@ -24,6 +24,9 @@ var CmdText = &base.Command{
 	PrintFlags: true,
 	Long: `
 Prints the text from the specified file or from stdin if '-' is used.
+
+External BDF bitmap fonts are rendered at their native pixel size. The
+-font-size and -dpi flags apply only to TrueType and OpenType fonts.
 `,
 }
 
@@ -36,11 +39,11 @@ var (
 )
 
 func init() {
-	CmdText.Flag.StringVar(&FontFile, "font-file", "", "font `filename` (overrides -font)")
+	CmdText.Flag.StringVar(&FontFile, "font-file", "", "font `filename` (.bin, .fnt, .bdf, .ttf, or .otf; overrides -font)")
 	CmdText.Flag.StringVar(&FontName, "font", "toshiba", "select a built-in font `name`")
 	CmdText.Flag.BoolVar(&ListFonts, "list-fonts", false, "lists built-in fonts")
-	CmdText.Flag.Float64Var(&TTFFontSize, "font-size", 5.0, "font size in `pt` for true-type fonts")
-	CmdText.Flag.Float64Var(&TTFDPI, "dpi", float64(thermoprint.LXD02Rasteriser.Dpi), "DPI for TrueType fonts")
+	CmdText.Flag.Float64Var(&TTFFontSize, "font-size", 5.0, "font size in `pt` for TrueType/OpenType fonts")
+	CmdText.Flag.Float64Var(&TTFDPI, "dpi", float64(thermoprint.LXD02Rasteriser.Dpi), "DPI for TrueType/OpenType fonts")
 }
 
 func runText(ctx context.Context, cmd *base.Command, args []string) error {
