@@ -200,6 +200,7 @@ type fontLoadFunc func(filename string, size float64, dpi float64) (font.Face, e
 var loadFuncs = map[string]fontLoadFunc{
 	".bin": loadFnt,
 	".fnt": loadFnt,
+	".bdf": loadBDF,
 	".ttf": loadTTF,
 	".otf": loadTTF,
 }
@@ -234,7 +235,25 @@ func loadFnt(filename string, _ float64, _ float64) (font.Face, error) {
 
 }
 
-const maxTTFsize = 10 * 1048576 // 10 MB
+const maxExternalFontSize = 10 * 1048576 // 10 MiB
+
+// loadBDF loads an Adobe BDF bitmap font at its native pixel size. The size
+// and DPI parameters apply only to scalable fonts and are intentionally
+// ignored here.
+func loadBDF(filename string, _ float64, _ float64) (font.Face, error) {
+	fi, err := os.Stat(filename)
+	if err != nil {
+		return nil, err
+	}
+	if maxExternalFontSize < fi.Size() {
+		return nil, errors.New("font file is too large")
+	}
+	face, err := fontpic.LoadBDF(filename)
+	if err != nil {
+		return nil, err
+	}
+	return face, nil
+}
 
 // loadTTF loads a true type font and returns a face with size points.
 func loadTTF(filename string, size float64, dpi float64) (font.Face, error) {
@@ -242,7 +261,7 @@ func loadTTF(filename string, size float64, dpi float64) (font.Face, error) {
 	if err != nil {
 		return nil, err
 	}
-	if maxTTFsize < fi.Size() {
+	if maxExternalFontSize < fi.Size() {
 		return nil, errors.New("font file is too large")
 	}
 	data, err := os.ReadFile(filename)

@@ -22,10 +22,23 @@ The following dithering algorithms are supported:
 Default is "atkinson".
 
 ## Text
+
 Printing text:
 ```shell
 ls -l | fold -w 49 | thermoprint -t -
 ```
+
+The `tp text` command supports raw FNT/BIN bitmap fonts, BDF bitmap fonts, and
+TrueType/OpenType fonts. For example, print with an external BDF font:
+
+```shell
+go run ./cmd/tp text -font-file path/to/font.bdf file.txt
+```
+
+BDF and raw bitmap fonts are rendered at their native pixel size. The
+`-font-size` and `-dpi` options apply only to TrueType and OpenType fonts. PCF
+fonts are not supported.
+
 If you don't want text to be resized, you can use `-crop` option, it will chop
 off the image at the 384 pixel boundary.
 

@@ -11,7 +11,7 @@ require (
 	github.com/makeworld-the-better-one/dither/v2 v2.4.0
 	github.com/miekg/dns v1.1.72
 	github.com/pterm/pterm v0.12.83
-	github.com/rusq/fontpic v0.0.8
+	github.com/rusq/fontpic v0.0.9
 	github.com/rusq/httpex v0.0.1
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/image v0.43.0
