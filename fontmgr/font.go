@@ -1,3 +1,8 @@
+// Package fontmgr is a font manager.
+//
+// There are two types of fonts:
+// - library fonts - fonts defined in the fontpic library
+// - embedded - fonts from the "fonts" directory.
 package fontmgr
 
 import (
@@ -31,7 +36,8 @@ type BitmapFont struct {
 	IsEmbedded bool // true if the font is embedded in the binary form
 }
 
-var embeddedFonts = map[string]font.Face{
+// libraryFonts embeds fonts from fontpic.
+var libraryFonts = map[string]font.Face{
 	"keyrus16":  fontpic.Face8x16,
 	"keyrus14":  fontpic.Face8x14,
 	"keyrus8":   fontpic.Face8x8,
@@ -53,20 +59,21 @@ var (
 )
 
 func ListAllFonts(cb func(BitmapFont, error) error) error {
-	if err := ListEmbedded(cb); err != nil {
+	if err := listLibFonts(cb); err != nil {
 		return fmt.Errorf("error listing embedded fonts: %w", err)
 	}
 
-	if err := LoadFontCatalogue(cb); err != nil {
+	if err := loadFontCatalogue(cb); err != nil {
 		slog.Error("error loading font catalogue", "error", err)
 	}
 
 	return nil
 }
 
-func ListEmbedded(cb func(BitmapFont, error) error) error {
+// listLibFonts calls callback function for every library font.
+func listLibFonts(cb func(BitmapFont, error) error) error {
 	var sorted []BitmapFont
-	for name, face := range embeddedFonts {
+	for name, face := range libraryFonts {
 		if face == nil {
 			continue
 		}
@@ -95,7 +102,8 @@ func ListEmbedded(cb func(BitmapFont, error) error) error {
 	return nil
 }
 
-func LoadFontCatalogue(cb func(BitmapFont, error) error) error {
+// loadFontCatalogue loads the font catalogue from the embedded FS.
+func loadFontCatalogue(cb func(BitmapFont, error) error) error {
 	f, err := fontFS.Open("fonts/fonts.csv")
 	if err != nil {
 		return fmt.Errorf("unable to find font catalogue: %w", err)
@@ -107,14 +115,18 @@ func LoadFontCatalogue(cb func(BitmapFont, error) error) error {
 	if err != nil {
 		return err
 	}
+	var numCols = len(header)
 
-	for {
+	for lineNo := 2; ; lineNo++ { // first line is header
 		row, err := cr.Read()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			return err
+		}
+		if rowLen := len(row); rowLen != numCols {
+			return fmt.Errorf("row %d: invalid number of columns. Expected %d, got %d", lineNo, numCols, rowLen)
 		}
 
 		var rec = make(map[string]string)
@@ -284,14 +296,14 @@ func loadTTF(filename string, size float64, dpi float64) (font.Face, error) {
 }
 
 func LoadEmbedded(name string) (font.Face, error) {
-	face, ok := embeddedFonts[name]
+	face, ok := libraryFonts[name]
 	if !ok {
 		return nil, ErrNotFound
 	}
 	return face, nil
 }
 
-// LoadByName loads a built-in font by it's name
+// LoadByName loads a built-in font by it's name from the font fs.
 func LoadByName(name string) (font.Face, error) {
 	face, err := LoadEmbedded(name)
 	if err != nil {
@@ -305,7 +317,7 @@ func LoadByName(name string) (font.Face, error) {
 
 func loadFromFS(name string) (font.Face, error) {
 	var fnt *BitmapFont
-	if err := LoadFontCatalogue(func(bif BitmapFont, err error) error {
+	if err := loadFontCatalogue(func(bif BitmapFont, err error) error {
 		if err != nil {
 			return err
 		}
