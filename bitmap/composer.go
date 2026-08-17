@@ -173,7 +173,7 @@ func NewDocument(c *Composer, dpi float64) *Document {
 		dpi:       dpi,
 		width:     c.Bounds().Dx(),
 		alignment: alignLeft,
-		font:      fontmgr.DefaultFont,
+		font:      fontmgr.DefaultFace,
 	}
 }
 

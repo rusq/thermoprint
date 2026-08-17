@@ -6,12 +6,14 @@
 package fontmgr
 
 import (
+	"bytes"
 	"embed"
 	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"log/slog"
 	"os"
 	"path"
@@ -27,6 +29,9 @@ import (
 
 //go:embed fonts/*
 var fontFS embed.FS
+
+//go:embed bdf/thermal-sans-mono-24.bdf
+var thermalFontBDF []byte
 
 type BitmapFont struct {
 	Name       string
@@ -49,6 +54,14 @@ var libraryFonts = map[string]font.Face{
 	"6x5bold":   fontpic.Face6x5Bold,
 	"6x5italic": fontpic.Face6x5Italic,
 	"robotron":  fontpic.FaceRobotron,
+}
+
+func init() {
+	face, err := fontpic.ParseBDF(bytes.NewReader(thermalFontBDF))
+	if err != nil {
+		log.Panicf("internal error: parsing thermal font BDF %s", err)
+	}
+	libraryFonts["thermal-24"] = face
 }
 
 var (
@@ -180,16 +193,16 @@ func atoiv[T ~uint8](s string, lo, hi int) (T, error) {
 	return v, nil
 }
 
-const defaultFont = "toshiba"
+const defaultFont = "thermal-24"
 
-var DefaultFont font.Face
+var DefaultFace font.Face
 
 func init() {
 	fnt, err := LoadByName(defaultFont)
 	if err != nil {
 		panic(fmt.Errorf("failed to load default font %q: %w", defaultFont, err))
 	}
-	DefaultFont = fnt
+	DefaultFace = fnt
 	slog.Debug("default font loaded", "name", defaultFont)
 }
 
