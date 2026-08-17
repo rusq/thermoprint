@@ -40,7 +40,7 @@ var (
 
 func init() {
 	CmdText.Flag.StringVar(&FontFile, "font-file", "", "font `filename` (.bin, .fnt, .bdf, .ttf, or .otf; overrides -font)")
-	CmdText.Flag.StringVar(&FontName, "font", "toshiba", "select a built-in font `name`")
+	CmdText.Flag.StringVar(&FontName, "font", "thermal-24", "select a built-in font `name`")
 	CmdText.Flag.BoolVar(&ListFonts, "list-fonts", false, "lists built-in fonts")
 	CmdText.Flag.Float64Var(&TTFFontSize, "font-size", 5.0, "font size in `pt` for TrueType/OpenType fonts")
 	CmdText.Flag.Float64Var(&TTFDPI, "dpi", float64(thermoprint.LXD02Rasteriser.Dpi), "DPI for TrueType/OpenType fonts")

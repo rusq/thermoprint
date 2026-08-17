@@ -44,7 +44,7 @@ func TestNewComposer_appliesOptions(t *testing.T) {
 			WithComposerEnableTextDither(true),
 		)
 
-		err := c.AppendText(fontmgr.DefaultFont, "hello")
+		err := c.AppendText(fontmgr.DefaultFace, "hello")
 
 		require.NoError(t, err)
 		assert.Equal(t, 1, calls)
