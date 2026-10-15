@@ -139,13 +139,18 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printer
 	}
 	dpi := int(p.Driver().DPI())
 	m := baseResponse(goipp.StatusOk, requestID)
-	a := adder(&m.Operation)
+	// Printer attributes belong in the printer-attributes group (RFC 8011
+	// §4.2.5.2); Windows' IPP class driver ignores them in the operation group.
+	a := adder(&m.Printer)
 	a("printer-uri-supported", goipp.TagURI, goipp.String(printerURI))
 	a("uri-authentication-supported", goipp.TagKeyword, ippNone)
 	a("uri-security-supported", goipp.TagKeyword, ippNone)
 	a("printer-name", goipp.TagName, goipp.String(p.Name()))
 	a("printer-info", goipp.TagText, goipp.String(p.Info()))
 	a("printer-make-and-model", goipp.TagText, goipp.String(p.MakeAndModel()))
+	a("printer-location", goipp.TagText, goipp.String(""))
+	a("printer-more-info", goipp.TagURI, goipp.String(ih.baseURL+p.Name()))
+	a("printer-device-id", goipp.TagText, goipp.String("MFG:Dolebo;MDL:LX-D02;CMD:PWGRaster,URF;CLS:PRINTER;"))
 	a("printer-state", goipp.TagEnum, goipp.Integer(p.State()))
 	a("printer-state-reasons", goipp.TagKeyword, ippNone)
 	a("ipp-versions-supported", goipp.TagKeyword, goipp.String("1.1"), goipp.String("2.0"))
@@ -168,6 +173,7 @@ func (ih *basicIPPServer) printerAttributes(p Printer, requestID uint32, printer
 	// format and falls back to ImageMagick for anything that is not raster.
 	a("document-format-default", goipp.TagMimeType, ippImagePWGRaster)
 	a("document-format-supported", goipp.TagMimeType, ippImagePWGRaster, ippImageURF)
+	a("document-format-preferred", goipp.TagMimeType, ippImagePWGRaster)
 	// PWG 5102.4 raster attributes; type keywords are bits-per-COLOR
 	// (24-bit RGB would be srgb_8), mono/grayscale only for this printer.
 	a("pwg-raster-document-resolution-supported", goipp.TagResolution,

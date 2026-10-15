@@ -587,10 +587,28 @@ const (
 )
 
 func (p *LXD02) sendInitSequence(job *printJob) {
+	hello := []byte{0x5a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	resp, err := p.sendAndWait(hello, hello[:2], responseTimeout)
+	if err != nil {
+		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("send init command 5a 01: %w", err)})
+		return
+	}
+	slog.Debug("init ack", "prefix", "5a 01", "response", fmt.Sprintf("% x", resp))
+
+	mac, ok := macFromInitResponse(resp)
+	if !ok {
+		if mac, err = macFromAddress(p.dev.Address.String()); err != nil {
+			p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: fmt.Errorf("printer MAC unavailable: %w", err)})
+			return
+		}
+	}
+	if err := p.appCheck(mac); err != nil {
+		p.dispatchJobEvent(job, fsmEvent{kind: eventError, err: err})
+		return
+	}
+	slog.Debug("app check passed", "mac", fmt.Sprintf("% x", mac))
+
 	initSeq := [][]byte{
-		{0x5a, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-		{0x5a, 0x0a, 0xB5, 0x7C, 0x4C, 0xB8, 0xAE, 0x70, 0x51, 0xE6, 0xD3, 0x06},
-		{0x5a, 0x0b, 0x66, 0x3B, 0x62, 0x8C, 0x1A, 0x69, 0xBF, 0x54, 0x74, 0x4C},
 		{0x5a, 0x0c, max(min(p.options.energy, maxEnergy), minEnergy)},
 	}
 	for _, cmd := range initSeq {

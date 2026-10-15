@@ -31,36 +31,36 @@ func TestPrinterAttributes_RasterAdvertisement(t *testing.T) {
 	resp, err := s.handleGetPrinterAttributes(context.Background(), req, nil)
 	require.NoError(t, err)
 
-	formats := attrStrings(t, resp.Operation, "document-format-supported")
+	formats := attrStrings(t, resp.Printer, "document-format-supported")
 	assert.ElementsMatch(t, []string{"image/pwg-raster", "image/urf"}, formats,
 		"only raster formats may be advertised; PDF would make clients skip client-side rasterisation")
-	assert.Equal(t, []string{"image/pwg-raster"}, attrStrings(t, resp.Operation, "document-format-default"))
+	assert.Equal(t, []string{"image/pwg-raster"}, attrStrings(t, resp.Printer, "document-format-default"))
 
-	assert.Equal(t, []string{"black_1", "sgray_8"}, attrStrings(t, resp.Operation, "pwg-raster-document-type-supported"))
-	assert.Equal(t, []string{"normal"}, attrStrings(t, resp.Operation, "pwg-raster-document-sheet-back"))
-	assert.Equal(t, urfSupported(203), attrStrings(t, resp.Operation, "urf-supported"),
+	assert.Equal(t, []string{"black_1", "sgray_8"}, attrStrings(t, resp.Printer, "pwg-raster-document-type-supported"))
+	assert.Equal(t, []string{"normal"}, attrStrings(t, resp.Printer, "pwg-raster-document-sheet-back"))
+	assert.Equal(t, urfSupported(203), attrStrings(t, resp.Printer, "urf-supported"),
 		"urf-supported must match the URF TXT record key")
 
-	res, ok := findAttr(resp.Operation, "pwg-raster-document-resolution-supported")
+	res, ok := findAttr(resp.Printer, "pwg-raster-document-resolution-supported")
 	require.True(t, ok, "pwg-raster-document-resolution-supported missing")
 	require.IsType(t, goipp.Resolution{}, res[0].V)
 	assert.Equal(t, goipp.Resolution{Xres: 203, Yres: 203, Units: goipp.UnitsDpi}, res[0].V)
 
-	media := attrStrings(t, resp.Operation, "media-supported")
+	media := attrStrings(t, resp.Printer, "media-supported")
 	assert.Contains(t, media, "om_label-48x100mm_48x100mm")
 	assert.Contains(t, media, rollCustomMinMedia)
 	assert.Contains(t, media, rollCustomMaxMedia)
-	assert.Equal(t, []string{"om_label-48x100mm_48x100mm"}, attrStrings(t, resp.Operation, "media-default"))
+	assert.Equal(t, []string{"om_label-48x100mm_48x100mm"}, attrStrings(t, resp.Printer, "media-default"))
 
-	cols, ok := findAttr(resp.Operation, "media-col-database")
+	cols, ok := findAttr(resp.Printer, "media-col-database")
 	require.True(t, ok, "media-col-database missing")
 	assert.Len(t, cols, 5, "one media-col per fixed label size plus custom roll range")
-	_, ok = findAttr(resp.Operation, "media-size-supported")
+	_, ok = findAttr(resp.Printer, "media-size-supported")
 	assert.True(t, ok, "media-size-supported missing")
 	assert.ElementsMatch(t,
 		[]string{"media-size", "media-top-margin", "media-bottom-margin", "media-left-margin", "media-right-margin"},
-		attrStrings(t, resp.Operation, "media-col-supported"))
-	_, ok = findAttr(resp.Operation, "media-col-default")
+		attrStrings(t, resp.Printer, "media-col-supported"))
+	_, ok = findAttr(resp.Printer, "media-col-default")
 	assert.True(t, ok, "media-col-default missing")
 }
 
